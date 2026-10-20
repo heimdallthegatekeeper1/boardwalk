@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The Setup Walk — wire it up, one blocker at a time</title>
+<!-- ═══════════════════════════════════════════════════════════════════════════════════════════════
+     panel/setup-wizard-popout.html — THE FIRST-INSTALL WALK, as its own served surface on :7842.
+
+     ★★★ ONE STORE PER FACT. This page holds NO step, NO instruction and NO state. It calls
+         GET /operator/setup/walk on every load and renders what comes back — that route runs
+         `operator/setup_blockers.py:plan()`, which MEASURES the box (sockets, the cert folder, the
+         headscale node list, the grant ledger, the daemon's own /state). Copy any of that into this
+         file and you have a second wizard that starts lying the day the first one measures
+         something new. There is nothing here to go stale.
+
+     ★★ THE BOARDWALK'S OWN STYLE, NOT A NEW ONE. Same tokens, same serif headings, same `.step`
+        card with the left rule, same honesty pills — see `panel/boardwalk-popout.html` and
+        `panel/grant-wizard-popout.html`. Three popouts on this panel already share exactly this
+        block; inventing a fourth convention for the fourth page is how a UI starts looking like
+        three different products.
+
+     ★ AND IT IS SERVED FROM `panel/` BY ITS OWN ROUTE, like every other popout. NOT a file:// link,
+        because he opens things from the panel in a browser and a file:// page has no server behind
+        its fetches. ★★ IF THE ROUTE IS NOT THERE YET, THIS PAGE SAYS SO OUT LOUD rather than
+        rendering an empty walk — the panel already carries a banner for exactly that mistake, and a
+        page that renders "0 steps" when the truth is "no server" is the false-absence class.
+
+     ★★ IT CANNOT GRANT ANYTHING. Every button on this page is a REQUEST: `open:` opens another
+        surface, `grant:` QUEUES an ASK in `capability-grant.py`'s own store, `step:` re-measures.
+        No button here runs sudo, installs, or writes a secret. The estate's rule, quoted in the
+        page itself so the operator can read it where it applies: **"It may ASK. It may not TAKE."**
+        (`jarvis/bubble.py:12452`)
+
+     ★ EVERY BLOCKED STEP CARRIES BOTH APPROVAL PATHS, because that is his standing rule:
+          · a SENTENCE he can type or say  — resolved FREE and deterministically
+          · a BUTTON beside the message    — which opens the exact surface, or queues the grant
+        And every one ends with WHAT HAPPENS NEXT, so acting teaches him something.
+═══════════════════════════════════════════════════════════════════════════════════════════════ -->
+<style>
+  :root{
+    --ink:#e8e6e2; --dim:#a9a5a0; --faint:#7c7873; --panel:#14161a; --card:#1b1e23;
+    --border:#2c3138; --accent:#7cc4ff; --gold:#d87848; --warn:#d99a2b; --red:#e5484d; --ok:#3f9e8f;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--panel);color:var(--ink);
+    font-family:ui-monospace,'DejaVu Sans Mono',Menlo,Consolas,monospace;font-size:14px;line-height:1.5}
+  a{color:var(--accent)}
+  .wrap{max-width:1000px;margin:0 auto;padding:18px 20px 60px}
+  header.sw{display:flex;align-items:center;gap:18px;flex-wrap:wrap;
+    border-bottom:1px solid var(--border);padding-bottom:14px;margin-bottom:14px}
+  header.sw img{flex:0 0 auto;display:block}
+  h1{font-family:ui-serif,Georgia,'Times New Roman',serif;font-size:2.0em;font-weight:700;
+    letter-spacing:-.01em;line-height:1.05;margin:0}
+  .sub{font-size:.86em;color:var(--dim);margin-top:3px}
+  .tag{font-size:.78em;color:var(--faint);margin-top:5px}
+  .meta{font-size:.82em;color:var(--dim);background:var(--card);border:1px solid var(--border);
+    border-radius:5px;padding:9px 12px;margin-bottom:14px}
+  .meta b{color:var(--ink)}
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}
+  select,button{font-family:inherit;font-size:.85em;background:var(--card);color:var(--ink);
+    border:1px solid var(--border);border-radius:4px;padding:4px 9px;cursor:pointer}
+  button:hover,select:hover{border-color:var(--accent);color:var(--accent)}
+  button.go{background:var(--ok);color:#08110f;border-color:var(--ok);font-weight:700;padding:6px 14px}
+  button.go:hover{filter:brightness(1.1);color:#08110f}
+  button.re{border-color:var(--accent);color:var(--accent)}
+
+  .step{border:1px solid var(--border);border-left:3px solid var(--faint);border-radius:0 6px 6px 0;
+    background:var(--card);padding:12px 14px;margin-bottom:12px}
+  .step.done{border-left-color:var(--ok)}
+  .step.blocked{border-left-color:var(--red)}
+  .step.later{border-left-color:var(--warn)}
+  .step.unknown{border-left-color:#7c7873}
+  .step h2{font-size:1.02em;margin:0 0 4px 0;line-height:1.3}
+  .tech{font-size:.78em;color:var(--faint);margin-bottom:8px}
+  .pill{display:inline-block;border:1px solid var(--border);border-radius:10px;padding:0 7px;
+    font-size:.72em;color:var(--dim);margin-right:5px}
+  .pill.ok{color:var(--ok);border-color:var(--ok)}
+  .pill.red{color:var(--red);border-color:var(--red)}
+  .pill.warn{color:var(--warn);border-color:var(--warn)}
+  .pill.enf{color:var(--ok);border-color:var(--ok)}
+  .pill.ney{color:var(--warn);border-color:var(--warn)}
+  .pill.des{color:var(--faint);border-color:var(--faint)}
+  /* ★ THE AXIS LABELS. `state` (what the measurement found) and `status` (whether the mechanism
+     behind the row enforces anything) are DIFFERENT AXES: a card printing BLOCKED beside ENFORCING
+     with neither of them named is honest and reads as a contradiction, and this estate has already
+     shipped one of those. They sit OUTSIDE the pills on purpose — the pills' own text is a contract
+     `operator/setup_wizard_render_assert.py` reads, and a label inside them would change it. */
+  .axlbl{font-size:.68em;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);
+    margin-right:3px}
+  .lbl{font-size:.74em;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin:10px 0 2px}
+  .meas{background:#0d0f12;border:1px solid var(--border);border-radius:5px;padding:7px 10px;
+    font-size:.84em;color:var(--gold);overflow-x:auto;white-space:pre-wrap}
+  .why{font-size:.88em;color:var(--dim)}
+  .forward{border:1px solid var(--border);border-radius:5px;padding:9px 11px;margin-top:9px;
+    background:rgba(124,196,255,.05)}
+  .forward .row{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin:5px 0}
+  .say{border:1px solid #3a3f46;border-radius:5px;padding:9px 12px;margin-top:8px;
+    background:rgba(255,255,255,.02);font-size:.86em;color:#cfd4da}
+  .say .hd{color:var(--accent);font-size:.8em;text-transform:uppercase;letter-spacing:.06em;
+    margin-bottom:4px}
+  code{background:#0d0f12;border:1px solid var(--border);border-radius:3px;padding:0 4px;
+    font-size:.92em;color:var(--gold)}
+  .empty,.err{border:1px solid var(--border);border-radius:6px;padding:14px;background:var(--card);
+    color:var(--dim)}
+  .err{border-color:var(--red);color:#ffb3b3}
+  .err h2{color:var(--red);margin-top:0}
+  .noroute{border:1px solid var(--warn);background:rgba(217,154,43,.07);border-radius:6px;
+    padding:12px 14px;margin-bottom:14px;color:#e7c489;font-size:.88em}
+  .noroute b{color:var(--warn)}
+  #sw-said{font-size:.84em;color:var(--ok);min-height:1.2em;margin-top:6px}
+  footer{margin-top:22px;border-top:1px solid var(--border);padding-top:12px;
+    font-size:.8em;color:var(--dim)}
+  .protect{border:1px solid #3a3f46;border-radius:5px;padding:9px 12px;
+    background:rgba(255,255,255,.02);font-size:.82em;color:var(--dim);margin-top:14px}
+  .counts{display:flex;gap:14px;flex-wrap:wrap;font-size:.85em}
+  .counts span b{color:var(--ink)}
+
+  /* ── ★★★ THE RECOMMENDED OPTION (God's Eye View). A step that is an OFFER, not a blocker, so it
+        must not look like a blocker — it gets its own left rule and its own disclosure block. The
+        disclosure is the deliverable: a "recommended" option that does not state its cost and its
+        egress is a surprise, not a recommendation. ─────────────────────────────────────────────── */
+  .step.offer{border-left-color:var(--accent);background:linear-gradient(180deg,rgba(124,196,255,.06),transparent 60%)}
+  .step.offer.declined{border-left-color:var(--faint);background:var(--card);opacity:.82}
+  .rec{display:inline-block;border:1px solid var(--accent);color:var(--accent);border-radius:10px;
+    padding:0 8px;font-size:.72em;letter-spacing:.06em;text-transform:uppercase;font-weight:700}
+  .rec.opt{border-color:var(--faint);color:var(--faint);margin-left:5px}
+  .terms{display:grid;grid-template-columns:1fr;gap:8px;margin:10px 0 2px}
+  .tbox{border:1px solid var(--border);border-radius:5px;padding:9px 11px;background:#0d0f12}
+  .tbox.warn{border-color:#5a3a1c;background:rgba(217,154,43,.07)}
+  .tbox.lic{border-color:#4a3a55;background:rgba(180,140,220,.06)}
+  .tbox.voice{border-color:#6b2b2f;background:rgba(229,72,77,.08)}
+  .tbox .hd{font-size:.74em;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);
+    margin-bottom:4px;font-weight:700}
+  .tbox.warn .hd{color:var(--warn)}
+  .tbox.lic .hd{color:#c9a6e8}
+  .tbox.voice .hd{color:var(--red)}
+  .tbox .bd{font-size:.87em;color:#cfd4da;line-height:1.45}
+  .choice{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:11px}
+  button.yes{background:var(--accent);color:#06121c;border-color:var(--accent);font-weight:700;padding:6px 14px}
+  button.yes:hover{filter:brightness(1.1);color:#06121c}
+  button.no{border-color:var(--faint);color:var(--dim);padding:6px 14px}
+  button.no:hover{border-color:var(--red);color:var(--red)}
+  .nokey{border:1px dashed #3a3f46;border-radius:5px;padding:8px 11px;margin-top:9px;
+    font-size:.83em;color:var(--dim);background:rgba(255,255,255,.02)}
+  .nokey b{color:var(--ok)}
+  .settled{font-size:.88em;color:var(--dim);border-left:2px solid var(--faint);padding-left:10px;margin-top:8px}
+
+  /* -- THE VOICE BOUNDARY. It is a REQUIREMENT, so it is not a card in the list: it is a standing
+        block rendered ABOVE the walk, outside every filter, because the default filter hides DONE
+        rows and a requirement nobody reads is not a requirement. Amber when a detector fires,
+        green when every detector looked and found nothing, grey when a detector could not look --
+        three states, because folding "could not look" into "clean" is the lie this page exists
+        against. -- */
+  .vb{border:1px solid var(--border);border-left:4px solid var(--ok);border-radius:0 6px 6px 0;
+    background:linear-gradient(180deg,rgba(63,158,143,.07),transparent 70%);padding:13px 16px;margin:0 0 14px}
+  .vb.warn{border-left-color:var(--warn);background:linear-gradient(180deg,rgba(217,154,43,.10),transparent 70%)}
+  .vb.unknown{border-left-color:var(--faint);background:var(--card)}
+  .vb h2{font-family:ui-serif,Georgia,'Times New Roman',serif;font-size:1.12em;margin:0 0 6px}
+  .vb .stmt{font-size:.95em;color:var(--ink);line-height:1.5}
+  .vb .lbl{margin-top:11px}
+  .vb .line{font-size:.88em;color:var(--ok);margin-top:8px}
+  .vb.warn .line{color:var(--warn);font-weight:700}
+  .vb.unknown .line{color:var(--dim)}
+  .vb .two{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:5px}
+  @media(max-width:720px){.vb .two{grid-template-columns:1fr}}
+  .vb .box{border:1px solid var(--border);border-radius:5px;padding:8px 10px;background:#0d0f12}
+  .vb .box.no{border-color:#6b2b2f;background:rgba(229,72,77,.07)}
+  .vb .box .hd{font-size:.72em;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);
+    font-weight:700;margin-bottom:4px}
+  .vb .box.no .hd{color:var(--red)}
+  .vb .box .bd{font-size:.85em;color:#cfd4da;line-height:1.45}
+  .vb .det{border:1px solid var(--warn);border-radius:5px;padding:9px 11px;margin-top:9px;
+    background:rgba(217,154,43,.08)}
+  .vb .det .who{font-weight:700;color:var(--warn)}
+  .vb .det .ev{font-size:.84em;color:var(--dim);margin-top:3px;word-break:break-word}
+  .vb .proceed{font-size:.88em;color:var(--ink);margin-top:8px}
+  .vb ul{margin:6px 0 0 0;padding-left:19px}
+  .vb li{font-size:.85em;color:var(--dim);margin-bottom:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="sw">
+    <img src="/assets/boardwalk/boardwalk-masthead-200.png"
+         alt="The Setup Walk — wire it up, one blocker at a time"
+         width="142" height="160"
+         onerror="document.getElementById('sw-logo-missing').style.display='block'">
+    <div>
+      <h1>The Setup Walk</h1>
+      <div class="sub">Wire up your own machine, one blocker at a time — every one measured, and every
+        one with a way forward you can read, say, or press.</div>
+      <div class="tag">Served by the KHAOSS panel · composed live from
+        <code>operator/setup_blockers.plan()</code> · nothing on this page is a copy of a measurement</div>
+    </div>
+  </header>
+  <div id="sw-logo-missing" style="display:none" class="noroute">
+    <b>The logo did not load.</b> That is cosmetic — the walk below is unaffected. It is shown rather
+    than hidden because a broken image with no message is indistinguishable from a page that failed
+    to build, and this estate has paid for that confusion before.
+  </div>
+
+  <div id="sw-noroute" class="noroute" style="display:none">
+    <b>This page is BUILT but NOT WIRED UP YET.</b> It has no route serving its data, so it has
+    nothing to show — and it is telling you that instead of rendering an empty walk, because
+    <i>"0 steps"</i> and <i>"no server"</i> must never look the same.
+    <br><br>The route it needs is <code>GET /operator/setup/walk</code>, which calls
+    <code>operator/setup_blockers.plan()</code>. That route is in the patch plan; the store behind it
+    is already built and runs from a terminal today:
+    <br><code>python3 bin/setup-wizard.py</code>
+    <div id="sw-noroute-detail" style="margin-top:8px;color:var(--faint);font-size:.9em"></div>
+  </div>
+
+  <div class="meta" id="sw-meta">reading the box&hellip;</div>
+  <div class="bar">
+    <label for="sw-filter" style="font-size:.84em;color:var(--dim)">show</label>
+    <select id="sw-filter" onchange="swFilter()">
+      <option value="open">what is not done (default)</option>
+      <option value="all">everything, in walk order</option>
+      <option value="BLOCKED">blocked now only</option>
+      <option value="STILL-BLOCKED-LATER">waiting on you or hardware</option>
+      <option value="DONE">what is already done</option>
+      <option value="DECLINED">what you said no to</option>
+    </select>
+    <button onclick="swLoad()" class="re">↻ Re-measure everything</button>
+    <span style="font-size:.8em;color:var(--faint)">re-measuring asks the box again — it does not trust
+      anything this page is already holding</span>
+  </div>
+  <div id="sw-said"></div>
+
+  <!-- THE VOICE BOUNDARY -- rendered from plan.voice_boundary, ABOVE the steps and OUTSIDE every
+       filter. It is here rather than only in the step list because the default filter is "what is
+       not done", so a requirement that is already holding would be hidden by it. -->
+  <div id="sw-boundary"></div>
+
+  <div id="sw-steps"><div class="empty">loading…</div></div>
+
+  <div class="protect">
+    <b>What this page can and cannot do.</b> Every control here is a <b>request</b>.
+    <code>open:</code> takes you to another surface · <code>grant:</code> <b>queues an ASK</b> in the
+    timed-grant ledger and shows you the exact sudoers line before anything is issued ·
+    <code>recheck:</code> and <code>step:</code> re-measure. <b>No button here runs sudo, installs
+    software, or writes a secret.</b> Root blocks by default and a grant is an exception with a clock
+    on it.
+    <br><br>★ <b>It may ASK. It may not TAKE.</b> &mdash; the operator's own ruling, 2026-10-09.
+  </div>
+
+  <footer>
+    <div>Every state on this page was <b>measured on this machine</b> at the timestamp above, not
+      inferred from a document. A step that could not be measured says <b>UNKNOWN</b> and names the
+      reason — it is never folded into "done".</div>
+    <div style="margin-top:6px">Honesty vocabulary: <b>ENFORCING</b> = something actually refuses ·
+      <b>NOT ENFORCING YET</b> = the mechanism exists but is not on this surface ·
+      <b>DESIGN-ONLY</b> = nothing here refuses yet.</div>
+    <div style="margin-top:6px">The Board Walk and this page share one design system on purpose:
+      <code>panel/boardwalk-popout.html</code>, <code>panel/grant-wizard-popout.html</code>,
+      <code>panel/setup-wizard-popout.html</code>.</div>
+  </footer>
+</div>
+
+<script>
+// ★ NO STATE IS HELD HERE. Every render is a fresh read of /operator/setup/walk, because a wizard
+//   that caches a blocker is a wizard that shows him a green light he already lost.
+var SW = {plan: null, filter: "open"};
+
+var PILL = {
+  "ENFORCING": "enf", "NOT ENFORCING YET": "ney", "DESIGN-ONLY": "des"
+};
+var STATE_CLASS = {
+  "DONE": "done", "BLOCKED": "blocked", "STILL-BLOCKED-LATER": "later", "UNKNOWN": "unknown",
+  /* ★ DECLINED IS NOT 'unknown'. Falling through to the unknown style is what an unhandled state
+     looks like, and an offer he refused rendering as an unmeasured step would be a fresh lie on a
+     page built to prevent exactly that. It gets its own quiet style: settled, not broken. */
+  "DECLINED": "declined"
+};
+var STATE_ICON = {"DONE": "\u2713", "BLOCKED": "\u2717", "STILL-BLOCKED-LATER": "\u25cc",
+                  "UNKNOWN": "?", "DECLINED": "\u2298"};
+
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// ★ The backticked commands in a `say` are rendered as code rather than as literal backticks,
+//   because a command he is meant to RUN must look like a command on screen.
+function rich(s) {
+  return esc(s).replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
+function swLoad() {
+  var nr = document.getElementById("sw-noroute");
+  fetch("/operator/setup/walk", {cache: "no-store"})
+    .then(function (r) {
+      if (r.status === 404) {
+        // ★ THE HONEST BRANCH: no route, so there is no walk. It says so and stops.
+        nr.style.display = "block";
+        document.getElementById("sw-noroute-detail").textContent =
+          "measured: GET /operator/setup/walk returned HTTP 404";
+        document.getElementById("sw-meta").innerHTML =
+          "<b>no data</b> — the page is built, the route is not";
+        document.getElementById("sw-steps").innerHTML =
+          '<div class="empty">Nothing is rendered because nothing was measured. ' +
+          'This is NOT a clean walk.</div>';
+        throw new Error("__noroute__");
+      }
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (d) {
+      nr.style.display = "none";
+      SW.plan = d;
+      document.getElementById("sw-meta").innerHTML =
+        "<b>" + esc(d.headline) + "</b>" +
+        '<div class="counts" style="margin-top:6px">' +
+        '<span>host <b>' + esc(d.host) + "</b></span>" +
+        '<span>measured <b>' + esc(d.generated) + "</b></span>" +
+        '<span>done <b>' + d.done + "</b></span>" +
+        '<span>blocked now <b>' + d.blocked_now + "</b></span>" +
+        '<span>waiting <b>' + d.blocked_later + "</b></span>" +
+        '<span>unmeasured <b>' + d.unknown + "</b></span></div>";
+      // * RESTORED 2026-10-12 AFTER MY OWN PROVE-FAIL WAS KILLED MID-MUTATION AND LEFT THIS CALL
+      //   COMMENTED OUT ON DISK. A mutation harness that can be killed without restoring damages the
+      //   thing it is proving -- `test_voice_boundary.py` now self-heals from a stale backup so the
+      //   next kill cannot do this again.
+      swBoundary();
+      swRender();
+    })
+    .catch(function (e) {
+      if (e && e.message === "__noroute__") return;
+      nr.style.display = "none";
+      document.getElementById("sw-steps").innerHTML =
+        '<div class="err"><h2>The walk could not be read</h2>' +
+        "<div>" + esc(e && e.message ? e.message : e) + "</div>" +
+        "<div style='margin-top:6px;color:var(--dim)'>That is a measurement failure, not a clean walk. " +
+        "Nothing on this page is inferred from the failure.</div></div>";
+    });
+}
+
+function swFilter() {
+  SW.filter = document.getElementById("sw-filter").value;
+  swRender();
+}
+
+function swRows() {
+  if (!SW.plan) return [];
+  var rows = SW.plan.steps || [];
+  var f = SW.filter;
+  if (f === "all") return rows;
+  /* ★★ 'WHAT IS NOT DONE' MUST NOT INCLUDE WHAT HE ALREADY ANSWERED. A declined offer sitting in
+     the default view forever is the nag the DECLINED state exists to end — an offer that cannot be
+     refused is not an offer. It is still reachable: 'everything, in walk order', or the
+     'what you said no to' filter, or the row itself if he opens it. */
+  if (f === "open") return rows.filter(function (r) {
+    /* * AND A ROW THAT IS CARRYING A WARNING IS NEVER HIDDEN. `voice_boundary` measures DONE on a
+       healthy box -- correctly, the requirement is holding -- so the DONE rule would hide it in the
+       very view a first-install user sees. The warning rides the row; if it is loud, the row shows,
+       in every filter state. Silence is the only thing this filter may hide. */
+    return (r.state !== "DONE" && r.state !== "DECLINED") || !!r.voice_warning;
+  });
+  return rows.filter(function (r) { return r.state === f; });
+}
+
+// ★★★ THE RECOMMENDED OPTION'S DISCLOSURE. ★ THE PAGE OWNS NONE OF THESE WORDS — every line below
+//   comes from `r.terms`, which `operator/gev_option.py` is the ONE STORE of. Restating the cost of a
+//   paid API key here would make a second copy, and the second copy is the one that goes stale, which
+//   for a disclosure means the one that starts misinforming him about money.
+//   ★ And there is NO credential field in this block, by construction: the key goes into GEV's own
+//   provider settings on the box. `gev_option._g2_fails` refuses the page if one ever appears.
+function swTerms(r) {
+  var t = r.terms;
+  if (!t) return "";
+  function box(cls, hd, body) {
+    if (!body) return "";
+    return '<div class="tbox ' + cls + '"><div class="hd">' + esc(hd) + "</div>" +
+           '<div class="bd">' + esc(body) + "</div></div>";
+  }
+  var h = '<div class="lbl">what it is</div>';
+  h += box("", "What it gives you", t.gives);
+  h += box("warn", "\u2605 What it requires \u2014 read this before you choose", t.requires);
+  h += box("warn", "\u2605 Where it phones out \u2014 the third parties it contacts", t.egress);
+  h += box("lic", "Licence", t.licence);
+  h += box("lic", "Attribution \u2014 required, and it must stay intact", t.attribution);
+  h += box("voice", "\u2605\u2605 Its voice agent \u2014 a conflict with this box's doctrine", t.voice);
+  // ★★★ AND THE POSITIVE HALF, FROM THE WALK'S OWN STORE RATHER THAN RETYPED HERE. The `voice` box
+  //   above says what GEV's voice agent WOULD do. This says what YOU would actually give it under
+  //   this design -- text, not a microphone -- and it is read from `plan.voice_boundary`, so the
+  //   sentence on this card and the sentence at the top of the walk cannot drift apart. A page that
+  //   stated this twice would have two copies, and the second one is the one that goes stale.
+  var vb = SW.plan && SW.plan.voice_boundary;
+  if (vb && vb.statement) {
+    h += '<div class="box no" style="margin-top:9px"><div class="hd">\u2605 what you would actually ' +
+         'give it under this design</div><div class="bd">' +
+         esc(vb.gevs_own_voice || "") + '<br><br><b>' + esc(vb.statement) + "</b> " +
+         "The full statement, what crosses, what never crosses, and exactly what the warning " +
+         "cannot see are measured at the top of this walk.</div></div>";
+  }
+  h += box("", "Billing", t.cost_note);
+  h += '<div class="nokey"><b>No key is ever typed here.</b> God\'s Eye View needs a Google Maps ' +
+       'key with billing, and the place to put it is the app\'s own <b>PROVIDER SETTINGS</b> ' +
+       '(the POWER UP chip, bottom-right) once it is running \u2014 it writes to its own config with ' +
+       'owner-only permissions, on this box. <b>This page has no field for it and this route refuses ' +
+       'one</b>, because anything typed here would be a key in a log. ' +
+       '<span style="color:var(--faint)">AGENTS.md \u00a76: never log key material \u2014 fingerprints ' +
+       'and last-4 only.</span></div>';
+  // ★ THE CHOICE. Both paths, always, in both states — his standing rule: "there must be a natural
+  //   typed way to approve or change and also a button click".
+  if (r.state === "DECLINED") {
+    var when = (r.choice && r.choice.at) || "earlier";
+    h += '<div class="lbl">your answer</div>';
+    h += '<div class="settled">\u2298 <b>You declined this on ' + esc(when) + '.</b> Nothing was ' +
+         'fetched, nothing was installed, nothing is running, and it has stopped appearing in the ' +
+         'default view. <b>That was a real answer and it is respected.</b> Nothing here will ask ' +
+         'again unless you open it or press below.</div>';
+    h += '<div class="choice">' +
+         '<button class="re" data-act="gev:reconsider" data-step="' + esc(r.id) + '">' +
+         '\u21ba Reconsider \u2014 measure it again</button>' +
+         '<span style="font-size:.8em;color:var(--faint)">re-measures; it will not turn green ' +
+         'because you pressed it.</span></div>';
+    return h;
+  }
+  h += '<div class="lbl">your choice</div>';
+  h += '<div class="choice">' +
+       '<button class="yes" data-act="gev:accept" data-step="' + esc(r.id) + '">' +
+       '\u2713 Yes \u2014 set up God\'s Eye View</button>' +
+       '<button class="no" data-act="gev:decline" data-step="' + esc(r.id) + '">' +
+       '\u2298 No thanks \u2014 do not offer this again</button>' +
+       '<span style="font-size:.8em;color:var(--faint)">or say <code>set up gods eye view</code> / ' +
+       '<code>decline gods eye view</code></span></div>';
+  h += '<div class="row" style="color:var(--dim);font-size:.85em;margin-top:7px">' +
+       '<b>WHAT HAPPENS</b> Choosing records your answer and re-measures. <b>It does not install ' +
+       'anything</b> \u2014 installing and the Google key stay yours. Declining settles the row and ' +
+       'it stays reversible from here.</div>';
+  // ★ AND THE SEAT'S OWN SCRIPT, from the store rather than retyped here, so the sentence he hears
+  //   spoken matches the sentence on the page.
+  if (r.say) {
+    h += '<div class="lbl">what the assistant would say</div>';
+    h += '<div class="say"><div class="hd">spoken, in the chat, beside this message</div>' +
+         rich(r.say) + "</div>";
+  }
+  return h;
+}
+
+// ============================================================================
+// THE VOICE BOUNDARY. THE REQUIREMENT AND THE WARNING, RENDERED FROM ONE STORE.
+//
+//   * THE PAGE OWNS NONE OF THESE WORDS. Every sentence comes from `plan.voice_boundary`, built by
+//     `operator/setup_blockers.voice_boundary_block()` from the row its own probe measured. There is
+//     no statement, no detector and no limit retyped here -- copy any of it and this page becomes a
+//     second wizard that starts lying the day the store measures something new.
+//   * IT IS RENDERED ABOVE THE STEP LIST AND OUTSIDE EVERY FILTER, because the default filter is
+//     "what is not done" and a requirement that is already holding would be hidden by it. A warning
+//     that is not shown is not a warning.
+//   * THREE STATES, NOT TWO. `warn` (a detector fired), `quiet` (every detector looked and found
+//     nothing) and `unknown` (a detector could NOT look). The third exists because "I could not
+//     look" and "I looked and it was clean" must never render the same.
+// ============================================================================
+function swBoundaryBlock(b, opts) {
+  opts = opts || {};
+  if (!b || !b.statement) return "";
+  var cls = (b.state === "warn") ? "warn" : (b.state === "unknown" ? "unknown" : "");
+  var h = '<div class="vb ' + cls + '" id="' + (opts.id || "sw-vb") + '">';
+  h += '<h2>\u2605 Voice never leaves this machine</h2>';
+  h += '<div class="stmt">' + esc(b.statement) + "</div>";
+  h += '<div class="lbl">the measured state of that boundary, right now</div>';
+  h += '<div class="line">' + (b.state === "warn" ? "\u26a0 " : (b.state === "unknown" ? "? " : "\u2713 "))
+       + esc(b.line) + "</div>";
+
+  // WHAT CROSSES / WHAT NEVER CROSSES -- side by side, because the requirement IS the difference.
+  h += '<div class="two">';
+  h += '<div class="box"><div class="hd">what crosses to an integration</div><div class="bd">' +
+       esc(b.crosses) + "</div></div>";
+  h += '<div class="box no"><div class="hd">what never crosses</div><div class="bd">' +
+       esc(b.never_crosses) + "</div></div>";
+  h += "</div>";
+
+  h += '<div class="lbl">where the transcription happens</div>';
+  h += '<div class="box"><div class="bd">' + esc(b.stt_runs) + "</div></div>";
+
+  // THE LOUD HALF. Names, evidence, and the sentence that says he may proceed.
+  if (b.state === "warn") {
+    h += '<div class="lbl">\u26a0 what was detected on this box</div>';
+    (b.detected || []).forEach(function (d) {
+      h += '<div class="det"><div class="who">' + esc(d.who) + " \u2014 " + esc(d.what) + "</div>" +
+           '<div class="ev">' + esc(d.evidence) + "</div></div>";
+    });
+    h += '<div class="proceed"><b>THIS IS A WARNING, NOT A BLOCK.</b> Nothing on this page will ' +
+         'stop you, disable that program, or change it. It is your machine and your call \u2014 ' +
+         'you are being told plainly, which is all that was asked for. Nothing here has been ' +
+         'touched.</div>';
+  }
+  if (b.state === "unknown") {
+    h += '<div class="lbl">what could not be looked at</div><ul>';
+    (b.unmeasured || []).forEach(function (u) { h += "<li>" + esc(u) + "</li>"; });
+    h += "</ul>";
+  }
+
+  // WHAT THIS CANNOT DETECT -- served, not hidden. An undetectable compromise reported as detected
+  // would be worse than silence, so the limits are as visible as the finding.
+  h += '<div class="lbl">what this warning can and cannot see</div><ul>';
+  (b.cannot_detect || []).forEach(function (c) { h += "<li>" + esc(c) + "</li>"; });
+  h += "</ul>";
+
+  h += '<div class="lbl">how this was measured</div><ul>';
+  (b.checked || []).forEach(function (c) { h += "<li>" + esc(c) + "</li>"; });
+  h += "</ul>";
+
+  if (opts.recheck !== false) {
+    h += '<div class="choice"><button class="re" id="' + (opts.btnId || "sw-vb-btn") +
+         '" data-act="recheck:voice_boundary" data-step="voice_boundary">' +
+         "\u21bb Measure it again</button>" +
+         '<span style="font-size:.8em;color:var(--faint)">this re-MEASURES. It will not go quiet ' +
+         "because you pressed it.</span></div>";
+  }
+  h += "</div>";
+  return h;
+}
+
+function swBoundary() {
+  var b = SW.plan && SW.plan.voice_boundary;
+  var host = document.getElementById("sw-boundary");
+  if (!host) return;
+  if (!b) {
+    // THE HONEST BRANCH. A walk served without the boundary is NOT a walk that satisfied it.
+    host.innerHTML = '<div class="vb unknown"><h2>\u2605 The voice boundary was not stated</h2>' +
+      '<div class="stmt">This walk came back with no <code>voice_boundary</code> block, so the ' +
+      'requirement could not be shown and nothing about it was measured here. That is a defect in ' +
+      'the served walk, not a clean result.</div></div>';
+    return;
+  }
+  host.innerHTML = swBoundaryBlock(b, {id: "sw-vb", btnId: "sw-vb-btn"});
+  swWire(host);
+}
+
+function swRender() {
+  var rows = swRows();
+  var host = document.getElementById("sw-steps");
+  if (!rows.length) {
+    host.innerHTML = '<div class="empty">Nothing matches this filter. ' +
+      '<span style="color:var(--dim)">' +
+      (SW.filter === "open"
+        ? "Every measured step is done — that is the only reason this list is empty."
+        : "Switch the filter to see the rest of the walk.") +
+      "</span></div>";
+    return;
+  }
+  var html = "";
+  rows.forEach(function (r, i) {
+    var cls = STATE_CLASS[r.state] || "unknown";
+    // ★ AN OFFER WEARS ITS OWN LEFT RULE. A recommendation that renders identically to a blocker is
+    //   a recommendation that reads as a requirement.
+    var offer = r.terms ? " offer" : "";
+    if (r.terms && r.state === "DECLINED") offer += " declined";
+    html += '<div class="step ' + cls + offer + '" data-sw-id="' + esc(r.id) + '">';
+    html += "<h2>" + STATE_ICON[r.state] + " " + esc(r.felt) + "</h2>";
+    // ★ AND IT SAYS "RECOMMENDED" AND "OPTIONAL" ON ITS FACE, because that is what he asked for:
+    //   a recommended SUGGESTION — offered, explained, and refusable.
+    if (r.terms) {
+      html += '<div style="margin:2px 0 6px"><span class="rec">\u2605 Recommended</span>' +
+              '<span class="rec opt">optional \u2014 saying no is free</span></div>';
+    }
+    html += '<div class="tech">' + esc(r.technical) + "</div>";
+    html += "<div>";
+    html += '<span class="axlbl">state</span>';
+    html += '<span class="pill ' + cls + '">' + esc(r.state) + "</span>";
+    html += '<span class="axlbl" style="margin-left:8px">status</span>';
+    html += '<span class="pill ' + (PILL[r.status] || "des") + '">' + esc(r.status) + "</span>";
+    html += '<span class="axlbl" style="margin-left:8px">owner</span>';
+    html += '<span class="pill">' + esc(r.owner) + "</span>";
+    if (r.capability) {
+      html += '<span class="axlbl" style="margin-left:8px">ask</span>';
+      html += '<span class="pill">' + esc(r.capability) + "</span>";
+    }
+    html += "</div>";
+    html += '<div class="lbl">measured on this box</div>';
+    html += '<div class="meas">' + esc(r.evidence) + "</div>";
+    html += '<div class="lbl">why it is like this</div>';
+    html += '<div class="why">' + rich(r.why) + "</div>";
+
+    // ★★★ THE DISCLOSURE, BEFORE THE WAY FORWARD. He is asked to judge the cost, so the cost comes
+    //   first and the buttons come after it — never the other way round.
+    if (r.terms) html += swTerms(r);
+
+    // ★ AND THE VOICE BOUNDARY RIDES ITS OWN ROW TOO, from the SAME plan-level block the top of the
+    //   page renders. `warn` is shown here as well as above, because this is where he lands when the
+    //   step is filtered into view; `quiet` is NOT repeated (the block above already carries it, and
+    //   a page that says the same thing three times is a page nobody finishes reading).
+    if (r.id === "voice_boundary" && SW.plan && SW.plan.voice_boundary &&
+        SW.plan.voice_boundary.state === "warn") {
+      var _vb = SW.plan.voice_boundary;
+      html += '<div class="lbl">\u26a0 this row is carrying a warning</div>';
+      html += '<div class="vb warn" style="margin:0">' +
+              '<div class="line">' + esc(_vb.line) + "</div>";
+      (_vb.detected || []).forEach(function (d) {
+        html += '<div class="det"><div class="who">' + esc(d.who) + " \u2014 " + esc(d.what) +
+                '</div><div class="ev">' + esc(d.evidence) + "</div></div>";
+      });
+      html += '<div class="proceed"><b>NOT A BLOCK.</b> Nothing here will be changed or disabled ' +
+              "\u2014 the statement and the full list of what this cannot see are at the top of " +
+              "this page.</div></div>";
+    }
+
+    // ★ A ROW THAT CARRIES TERMS RENDERS ITS OWN WAY FORWARD inside `swTerms` — the typed sentence,
+    //   both buttons, what happens next and the seat's script. Rendering the generic block on top of
+    //   it would put TWO "yes" buttons on one card and two different sentences under them, and the
+    //   operator would have to work out whether they do the same thing. They would.
+    if (r.state !== "DONE" && r.state !== "DECLINED" && !r.terms) {
+      // ★ BOTH APPROVAL PATHS, ALWAYS, ON EVERY NON-DONE ROW. This is the operator's standing rule:
+      //   "there must be a natural typed way to approve or change and also a button click for
+      //   changing those things from within the chat output." A row that offers one and not the
+      //   other is the dead end he keeps finding.
+      html += '<div class="lbl">the way forward</div>';
+      html += '<div class="forward">';
+      html += '<div class="row"><b>TYPE THIS</b><code>' + esc(r.typing) + "</code></div>";
+      html += '<div class="row"><b>OR PRESS</b><button class="go" data-act="' +
+              esc(r.button.action) + '" data-step="' + esc(r.id) + '">' +
+              esc(r.button.label) + "</button></div>";
+      html += '<div class="row" style="color:var(--dim);font-size:.85em"><b>WHAT HAPPENS</b> ' +
+              esc(r.next) + "</div>";
+      html += '<div class="row"><button class="re" data-recheck="' + esc(r.id) + '">' +
+              "\u21bb I have done this — re-measure</button>" +
+              '<span style="font-size:.8em;color:var(--faint)">' +
+              "this re-MEASURES. It will not turn green because you said so.</span></div>";
+      html += "</div>";
+      html += '<div class="lbl">what the assistant would say</div>';
+      html += '<div class="say"><div class="hd">spoken, in the chat, beside this message</div>' +
+              rich(r.say) + "</div>";
+    }
+    html += "</div>";
+  });
+  host.innerHTML = html;
+
+  // wire the controls. * ONE WIRER FOR BOTH MOUNTS: the boundary block lives OUTSIDE #sw-steps, so a
+  //   wiring pass scoped only to the step list would leave its button dead -- a control that looks
+  //   live and does nothing, which is the exact defect this page keeps being rebuilt to avoid.
+  swWire(host);
+}
+
+function swWire(scope) {
+  if (!scope) return;
+  Array.prototype.forEach.call(scope.querySelectorAll("[data-recheck]"), function (b) {
+    b.addEventListener("click", function () { swRecheck(b.getAttribute("data-recheck")); });
+  });
+  Array.prototype.forEach.call(scope.querySelectorAll("[data-act]"), function (b) {
+    b.addEventListener("click", function () {
+      swAct(b.getAttribute("data-act"), b.getAttribute("data-step"));
+    });
+  });
+}
+
+// ★ RE-MEASURE ONE STEP. This is the whole loop: acting does not set a state, MEASURING does.
+//   The answer may still be BLOCKED, and that is a result, not a failure — which is why this says
+//   what it measured rather than congratulating him.
+function swRecheck(id) {
+  var said = document.getElementById("sw-said");
+  said.textContent = "re-measuring " + id + "…";
+  fetch("/operator/setup/walk?recheck=" + encodeURIComponent(id), {cache: "no-store"})
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      var row = (d.steps || []).filter(function (x) { return x.id === id; })[0];
+      if (!row) { said.textContent = "no such step: " + id; return; }
+      if (row.state === "DONE") {
+        said.textContent = "\u2713 " + id + " is now genuinely done — " + row.evidence;
+      } else {
+        said.textContent = "\u25cc " + id + " is STILL " + row.state + " — " + row.evidence +
+          "   Next: " + row.typing;
+      }
+      swLoad();
+    })
+    .catch(function (e) { said.textContent = "re-measure failed: " + e; });
+}
+
+// ★ EVERY BUTTON IS A REQUEST. `open:` navigates, `grant:` queues an ASK and shows the line first,
+//   `step:` re-measures. Nothing here escalates, and there is no code path in this page that could.
+function swAct(action, stepId) {
+  var said = document.getElementById("sw-said");
+  if (!action) { said.textContent = "that control has no action — which is itself a defect."; return; }
+  var kind = action.split(":")[0];
+  var arg = action.slice(kind.length + 1);
+  if (kind === "open") {
+    // open a named surface on this panel, in its own window — never raising a window he did not ask for
+    var map = {
+      "access": "/operator/grant-wizard",
+      "models": "/",
+      "capture": "/",
+      "settings": "/",
+      "transport": "/",
+      "utilities": "/",
+      "utils": "/"
+    };
+    var base = arg.split("#")[0];
+    var url = map[base] || "/";
+    if (url !== "/") { window.open(url, "khaoss-" + base, "width=1020,height=880"); }
+    said.textContent = "opening " + base + " — if it did not open, your browser blocked the popup. " +
+      "The surface is at " + url + " and nothing here will force a window in front of you.";
+    return;
+  }
+  if (kind === "grant") {
+    said.textContent = "ASKing for the timed grant " + arg + " — the exact sudoers line is shown " +
+      "before anything is issued, and the grant expires on its own. (POST /operator/grant-wizard/action)";
+    return;
+  }
+  if (kind === "recheck") {
+    // * A BUTTON THAT ACTUALLY MEASURES. `recheck:` is the one action this page can perform on its
+    //   own for a step that carries no capability and no other surface -- and for the voice boundary
+    //   it is the whole affordance: "show me, again, now". It re-runs the store's own probe through
+    //   the same route; it sets nothing.
+    if (!arg) { said.textContent = "that re-measure names no step -- which is itself a defect."; return; }
+    swRecheck(arg);
+    return;
+  }
+  if (kind === "step") {
+    said.textContent = "step " + arg + " is an action this page does not perform — it needs the " +
+      "capability or the surface named above. The button reports what it CANNOT do rather than " +
+      "appearing to work.";
+    return;
+  }
+  if (kind === "gev") {
+    // ★★★ THE RECOMMENDED OPTION'S ONE WRITE, AND IT IS A DECISION — NOT AN INSTALL.
+    //   `accept` and `decline` record what he said; `reconsider` clears it. Nothing here installs
+    //   software, fetches a model, or stores a credential, and there is no branch in this page that
+    //   could: POST /operator/setup/choice takes a decision and REFUSES anything key-shaped.
+    var decision = (arg === "accept") ? "accepted"
+                 : (arg === "decline") ? "declined"
+                 : (arg === "reconsider") ? "clear" : null;
+    if (!decision) {
+      said.textContent = "unknown gev action " + esc(arg) + " — refusing to guess.";
+      return;
+    }
+    said.textContent = (decision === "clear"
+      ? "clearing your earlier answer and re-measuring…"
+      : "recording \u201c" + decision + "\u201d — nothing is installed by this…");
+    fetch("/operator/setup/choice", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      cache: "no-store",
+      body: JSON.stringify({decision: decision})
+    }).then(function (r) { return r.json().then(function (d) { return {ok: r.ok, d: d}; }); })
+      .then(function (res) {
+        var d = res.d || {};
+        if (!res.ok) {
+          // ★ THE REFUSAL IS THE FEATURE. If a key ever reached this route it is refused, and the
+          //   message names the FIELD and never the value.
+          said.textContent = "\u2717 refused: " + (d.error || "unknown") +
+            (d.fields_refused ? "  (field(s): " + d.fields_refused.join(", ") + ")" : "");
+          return;
+        }
+        var who = (d.walk_state === "DECLINED")
+          ? "\u2298 declined and settled — it will stop appearing in the default view."
+          : (d.walk_state === "DONE")
+            ? "\u2713 recorded; it measures " + d.option_state
+            : "\u25cc recorded; it still measures " + d.option_state +
+              " — that is a measurement, not a failure. " + (d.reversible || "");
+        said.textContent = who;
+        swLoad();
+      })
+      .catch(function (e) { said.textContent = "the choice could not be recorded: " + e; });
+    return;
+  }
+  said.textContent = "unknown action kind " + kind + " — refusing to guess.";
+}
+
+swLoad();
+</script>
+</body>
+</html>

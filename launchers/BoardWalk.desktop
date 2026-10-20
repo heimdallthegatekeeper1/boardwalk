@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=BoardWalk
+GenericName=Guided Board
+Comment=One board, a guided walk, and a pointer that rings the real control
+Exec=python3 "__APP_DIR__/launchers/boardwalk_launcher.py"
+TryExec=python3
+Icon=__APP_DIR__/launchers/icons/boardwalk.png
+Terminal=false
+Categories=Utility;
+StartupNotify=true

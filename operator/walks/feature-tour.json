@@ -1,0 +1,198 @@
+{
+ "id": "feature-tour",
+ "title": "BoardWalk feature tour \u2014 the fake test item",
+ "steps": [
+  {
+   "id": "tour-board",
+   "title": "1 \u00b7 One board, one surface",
+   "body": "This is the Operator Needs Board \u2014 the board, the walk, the utilities and the point-me-to-there overlay all live here. The red cancel is in the guide sidebar and the walk bar; close is not cancel.",
+   "target": {
+    "rect": [
+     120,
+     130,
+     600,
+     220
+    ]
+   },
+   "illustration": {
+    "frame": "target",
+    "items": [
+     {
+      "kind": "box",
+      "rect": [
+       -6,
+       -6,
+       612,
+       232
+      ],
+      "text": "the board lives here",
+      "color": "blue"
+     },
+     {
+      "kind": "label",
+      "at": [
+       -12,
+       -40
+      ],
+      "text": "1 . Read the card",
+      "color": "blue"
+     },
+     {
+      "kind": "arrow",
+      "from": [
+       90,
+       -20
+      ],
+      "to": [
+       45,
+       4
+      ],
+      "color": "gold"
+     },
+     {
+      "kind": "label",
+      "at": [
+       380,
+       -40
+      ],
+      "text": "2 . The bar cancels",
+      "color": "green"
+     },
+     {
+      "kind": "arrow",
+      "from": [
+       410,
+       -20
+      ],
+      "to": [
+       520,
+       4
+      ],
+      "color": "gold"
+     }
+    ]
+   },
+   "anchor": "KHAOSS"
+  },
+  {
+   "id": "tour-point",
+   "title": "2 \u00b7 Your agent points; the overlay rings",
+   "body": "bin/point-at.py reads the screen with local OCR, filters it, and cites the words on the control. The overlay draws the ring on the real desktop and the agent's diagram describes what to do.",
+   "target": {
+    "rect": [
+     100,
+     600,
+     1000,
+     90
+    ]
+   },
+   "illustration": {
+    "frame": "target",
+    "items": [
+     {
+      "kind": "box",
+      "rect": [
+       -6,
+       -6,
+       1012,
+       102
+      ],
+      "text": "the point-me-to-there bar",
+      "color": "blue"
+     },
+     {
+      "kind": "label",
+      "at": [
+       -12,
+       -58
+      ],
+      "text": "agent: see -> point -> verify",
+      "color": "cream"
+     },
+     {
+      "kind": "arrow",
+      "from": [
+       120,
+       -22
+      ],
+      "to": [
+       40,
+       -4
+      ],
+      "color": "gold"
+     },
+     {
+      "kind": "dot",
+      "at": [
+       1040,
+       30
+      ],
+      "r": 7,
+      "text": "cancel here",
+      "color": "red"
+     }
+    ]
+   },
+   "anchor": "KHAOSS"
+  },
+  {
+   "id": "tour-cancel",
+   "title": "3 \u00b7 Leave at any time",
+   "body": "This is a guide you can cancel: the red button in the overlay card, the guide sidebar, the walk bar and this point-to bar. Cancel dismisses the walk in its one store and marks nothing done.",
+   "target": {
+    "rect": [
+     80,
+     80,
+     1200,
+     900
+    ]
+   },
+   "illustration": {
+    "frame": "target",
+    "items": [
+     {
+      "kind": "label",
+      "at": [
+       40,
+       40
+      ],
+      "text": "cancel walk -> dismisses the guide",
+      "color": "red"
+     },
+     {
+      "kind": "arrow",
+      "from": [
+       180,
+       80
+      ],
+      "to": [
+       260,
+       140
+      ],
+      "color": "red"
+     },
+     {
+      "kind": "label",
+      "at": [
+       40,
+       760
+      ],
+      "text": "close / stop -> hides the overlay only",
+      "color": "cream"
+     },
+     {
+      "kind": "dot",
+      "at": [
+       300,
+       760
+      ],
+      "r": 7,
+      "text": "the choice is yours",
+      "color": "gold"
+     }
+    ]
+   },
+   "anchor": "KHAOSS"
+  }
+ ]
+}

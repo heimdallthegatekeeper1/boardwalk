@@ -1,0 +1,1807 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DSH Activity — subagents &amp; background jobs</title>
+<style>
+  :root{
+    --bg:#0b0d10; --panel:#14161a; --panel2:#1b1e23; --border:#2a2f36;
+    --dim:#8b93a1; --text:#e6e9ee; --accent:#7cc4ff; --green:#4cd97b;
+    --amber:#e6b450; --red:#e06c6c; --purple:#b48cff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:1.45}
+  header{
+    position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+    padding:10px 16px;background:linear-gradient(90deg,#17303d,var(--panel2));
+    border-bottom:1px solid var(--accent);
+  }
+  header .brand{font-weight:700;font-size:14px;color:var(--accent);white-space:nowrap}
+  header .sub{color:var(--dim);font-size:11px}
+  .view-toggle{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+  .view-toggle button{
+    background:var(--panel);color:var(--dim);border:0;padding:7px 16px;cursor:pointer;
+    font-size:12px;font-weight:700;border-right:1px solid var(--border)
+  }
+  .view-toggle button:last-child{border-right:0}
+  .view-toggle button.active{background:var(--accent);color:#0b0d10}
+  .view-toggle button:disabled{opacity:.5;cursor:progress}
+  button:focus-visible,input:focus-visible,summary:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+  /* ── screenshot mode control: same .view-toggle shell, its own accent colours ── */
+  #shot-mode-wrap{margin-left:auto;display:inline-flex;align-items:center;gap:8px}
+  #shot-mode{margin-left:0}
+  #shot-mode button.active[data-shots="on"]{background:var(--green);color:#0b0d10}
+  #shot-mode button.active[data-shots="off"]{background:var(--amber);color:#0b0d10}
+  #shot-mode button.active[data-shots="off"].unhonored{background:var(--red);color:#0b0d10}
+  .shot-mode-cap{font-size:11px;color:var(--dim);letter-spacing:.3px;text-transform:uppercase;font-weight:700}
+  #shot-mode-note{font-size:10.5px;color:var(--dim);max-width:280px;line-height:1.3}
+  #status{font-size:11px;color:var(--dim)}
+  #status .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;vertical-align:middle}
+  .dot.live{background:var(--green)} .dot.stale{background:var(--amber)} .dot.dead{background:var(--red)}
+  main{padding:14px 16px 60px}
+  .src-badge{
+    display:inline-block;font-size:10.5px;padding:2px 8px;border-radius:10px;border:1px solid var(--green);
+    color:var(--green);margin-left:6px;vertical-align:middle;letter-spacing:.3px
+  }
+  .src-badge.stub{border-color:var(--red);color:var(--red)}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px}
+  .card h2{font-size:12px;margin:0 0 8px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}
+  .row{display:flex;align-items:center;gap:8px;padding:5px 6px;border-bottom:1px solid #1d2127}
+  .row:last-child{border-bottom:0}
+  .status-pill{font-size:10px;font-weight:700;padding:1px 7px;border-radius:9px;white-space:nowrap}
+  .s-running{background:rgba(76,217,123,.14);color:var(--green)}
+  .s-inactive{background:rgba(139,147,161,.14);color:var(--dim)}
+  .s-completed{background:rgba(124,196,255,.14);color:var(--accent)}
+  .s-failed,.s-killed{background:rgba(224,108,108,.14);color:var(--red)}
+  .s-stopping{background:rgba(230,180,80,.16);color:var(--amber)}
+  .label{font-weight:600}
+  .dim{color:var(--dim)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media (max-width:900px){.grid2{grid-template-columns:1fr}}
+  .job-card{border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:8px;background:var(--panel2)}
+  .job-card .head{display:flex;align-items:center;gap:8px}
+  .bar{height:4px;border-radius:2px;background:var(--border);margin-top:6px;overflow:hidden}
+  .bar>span{display:block;height:100%;background:var(--accent)}
+  .empty{color:var(--dim);padding:20px;text-align:center;border:1px dashed var(--border);border-radius:8px}
+  .empty b{color:var(--text)}
+  .big-error{color:var(--red);padding:14px;border:1px solid var(--red);border-radius:8px;background:rgba(224,108,108,.08)}
+  .big-error .fix{color:var(--amber);margin-top:6px}
+  .loading{color:var(--accent);padding:20px;text-align:center;border:1px dashed var(--accent);border-radius:8px}
+  .hint{font-size:11px;color:var(--dim);margin-top:8px}
+  .warnbar{
+    border:1px solid var(--red);background:rgba(224,108,108,.08);color:var(--red);
+    border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:12px
+  }
+  .warnbar.calm{border-color:var(--amber);background:rgba(230,180,80,.08);color:var(--amber)}
+  .warnbar b{color:inherit}
+  .warnbar .fix{color:var(--text);display:block;margin-top:5px;font-size:11.5px}
+
+  /* ══════════ CONTROLS (one shape for every setting — criterion 12) ══════════ */
+  .ctl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:10px}
+  .ctl{border:1px solid var(--border);border-radius:7px;padding:7px 9px;background:var(--panel2)}
+  .ctl-top{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .ctl-lab{font-size:11px;font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:.4px}
+  .ctl-num{
+    width:62px;background:#0d1013;color:var(--text);border:1px solid var(--border);border-radius:5px;
+    padding:3px 5px;font-family:ui-monospace,monospace;font-size:12px
+  }
+  .chips{display:inline-flex;flex-wrap:wrap;gap:3px}
+  .chip{
+    background:var(--panel);color:var(--dim);border:1px solid var(--border);border-radius:5px;
+    padding:2px 7px;font-size:11px;cursor:pointer;font-family:ui-monospace,monospace
+  }
+  .chip:hover{color:var(--text);border-color:var(--accent)}
+  .chip.on{background:var(--accent);color:#0b0d10;border-color:var(--accent);font-weight:700}
+  .ctl-val{font-size:11px;color:var(--text);margin-top:5px;font-family:ui-monospace,monospace}
+  .ctl-why{font-size:10.5px;color:var(--dim);margin-top:2px}
+  .ctl-bulk{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px}
+  .btn{
+    background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;
+    padding:5px 10px;font-size:11.5px;cursor:pointer
+  }
+  .btn:hover{border-color:var(--accent)}
+  .btn.warn:hover{border-color:var(--red);color:var(--red)}
+  .keys{margin-top:8px;font-size:10.5px;color:var(--dim)}
+  kbd{background:#0d1013;border:1px solid var(--border);border-radius:4px;padding:0 4px;font-family:ui-monospace,monospace;font-size:10.5px}
+
+  /* ══════════ LEGEND — which agents exist and what each one did ══════════ */
+  .legend-row{
+    display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:transparent;
+    border:0;border-bottom:1px solid #1d2127;padding:5px 6px;color:var(--text);cursor:pointer;font-size:12px
+  }
+  .legend-row:hover{background:#181b20}
+  .legend-row:last-child{border-bottom:0}
+  .legend-row .what{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim)}
+  .legend-row .nums{font-family:ui-monospace,monospace;font-size:10.5px;color:var(--dim);white-space:nowrap}
+
+  /* ══════════ HIGH: per-agent panels (log + screenshots paired) ══════════
+     Shape borrowed from Agent Zero's per-agent conversation panel: one
+     collapsible container per agent, and every tool call / result / message /
+     screenshot for THAT agent streams inline inside it, in time order.
+     ★ LAYOUT: the container is a CSS GRID with auto-fit, so the panels stack 1 per row
+     when the window is narrow/zoomed-in and flow side by side when it is wide — with no
+     toggle and no fixed column count. 420px is the minimum a panel must be to be readable:
+     a shot row is 62px time + 236px tile + gaps + padding ≈ 330px before any meta text,
+     and the summary line (chevron + pill + label + id + counts) needs ≈ 400px to stay on
+     one line. min(420px,100%) keeps a single column from overflowing below 420px. */
+  #agent-panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:10px;align-items:start}
+  #agent-panels>.agent-panel{margin-bottom:0}
+  #agent-panels>.empty,#agent-panels>.ap-note,#agent-panels>.stream-note,#agent-panels>.shot-health{grid-column:1/-1}
+  .agent-panel{border:1px solid var(--border);border-radius:8px;background:var(--panel2);margin-bottom:8px;overflow:hidden}
+  #layout-note{font-size:10.5px;color:var(--dim);margin-left:8px;font-weight:600}
+  .agent-panel>summary{
+    cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;
+    padding:8px 10px;background:var(--panel);user-select:none
+  }
+  .agent-panel>summary::-webkit-details-marker{display:none}
+  .agent-panel>summary:hover{background:#181b20}
+  .agent-panel[open]>summary{border-bottom:1px solid var(--border)}
+  .agent-panel>summary .chev{
+    flex:0 0 auto;width:8px;height:8px;margin:0 3px 3px 1px;
+    border-right:2px solid var(--dim);border-bottom:2px solid var(--dim);
+    transform:rotate(-45deg);transition:transform .12s ease
+  }
+  .agent-panel[open]>summary .chev{transform:rotate(45deg);margin-bottom:0;margin-top:3px}
+  .agent-panel>summary .counts{margin-left:auto;color:var(--dim);font-size:11px;font-family:ui-monospace,monospace;white-space:nowrap}
+  .agent-panel.muted>summary .label{color:var(--dim)}
+  .ap-body{padding:6px 8px 10px}
+  .ap-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:2px 4px 7px;border-bottom:1px solid var(--border);margin-bottom:6px}
+  .ap-tools .tl{font-size:10.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.4px;font-weight:700}
+  .stream{display:flex;flex-direction:column}
+  .stream.full{max-height:420px;overflow-y:auto;border:1px solid var(--border);border-radius:6px}
+  .ev{display:flex;gap:10px;padding:4px 6px;border-bottom:1px solid #1d2127;font-size:12px}
+  .ev:last-child{border-bottom:0}
+  .ev .t{color:var(--dim);white-space:nowrap;font-family:ui-monospace,monospace;font-size:10.5px;min-width:62px}
+  .ev .what{flex:1;word-break:break-word}
+  .stream.compact .ev .what{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ev.tool .what{color:var(--accent)} .ev.tool-result .what{color:var(--dim)}
+  .ev.assistant .what{color:var(--text)} .ev.user .what{color:var(--amber)}
+  .ev.err .what{color:var(--red)}
+  .ev .ico{width:14px;flex:0 0 auto;text-align:center;color:var(--dim)}
+  .stream-note{font-size:11px;color:var(--dim);padding:4px 6px}
+  /* paired screenshot row, inline in the agent's stream */
+  .shot-row{display:flex;gap:8px;padding:5px 6px;border-bottom:1px solid #1d2127;align-items:flex-start;background:rgba(124,196,255,.04)}
+  .shot-row .t{color:var(--dim);white-space:nowrap;font-family:ui-monospace,monospace;font-size:10.5px;min-width:62px;padding-top:2px}
+  /* ★ THUMBNAIL = 25% of the previous rendered size. The tile used to render at 236px; the
+     operator asked for a quarter of that, so the rendered width is 59px EXACTLY (236 / 4).
+     The stored JPEG (480x516) is untouched — this is a CSS/render-layer change only. At 59px
+     the image is an INDEX, not a readable preview: that is precisely why the click-to-enlarge
+     viewer exists, and the panel says so rather than pretending 59px is legible. */
+  :root{--thumb-w:59px}
+  .shot-tile{
+    position:relative;display:block;flex:0 0 auto;padding:0;border:1px solid var(--border);border-radius:4px;
+    overflow:hidden;background:#000;line-height:0;cursor:zoom-in
+  }
+  .shot-tile img{display:block;width:var(--thumb-w);height:auto}
+  .shot-tile:hover{border-color:var(--accent)}
+  .shot-tile .amb{
+    position:absolute;top:0;right:0;width:0;height:0;border-top:14px solid rgba(230,180,80,.92);
+    border-left:14px solid transparent;font-size:0;line-height:0
+  }
+  .shot-meta{font-size:10.5px;color:var(--dim);flex:1;padding-top:1px}
+  .shot-meta .k{color:var(--dim);opacity:.8}
+  .shot-row.missing .shot-tile{display:none}
+  .shot-row.missing .shot-meta .k{color:var(--red)}
+
+  /* ══════════ LIGHTBOX — one reused element, no per-shot full-size <img> anywhere ══════════
+     Opened by clicking a 59px thumbnail. It is a fixed overlay: it never resizes the page or
+     touches the panels underneath, so dismissing it (Esc, ✕, or a backdrop click) leaves the
+     layout exactly as it was, scroll position included. Navigation: ←/→ and the on-screen
+     prev/next; the "all shots" button turns the stage into a bounded contact sheet of the WHOLE
+     ring (40 max) — more navigation, not decoration. */
+  #lb[hidden]{display:none}
+  #lb{position:fixed;inset:0;z-index:100;background:rgba(4,6,8,.93);display:flex;flex-direction:column;padding:10px 14px 14px}
+  .lb-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .lb-bar .grow{flex:1}
+  #lb-title{font-size:11.5px;color:var(--text);font-family:ui-monospace,monospace}
+  .lb-stage{flex:1;display:flex;align-items:center;justify-content:center;min-height:0;padding:8px 0}
+  #lb-img{max-width:100%;max-height:100%;background:#000;border:1px solid var(--border);border-radius:6px;object-fit:contain}
+  #lb-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;width:100%;max-height:100%;overflow-y:auto;align-content:start}
+  #lb-grid[hidden],#lb-img[hidden],#lb-err[hidden]{display:none}
+  .lb-gridcell{position:relative;border:1px solid var(--border);border-radius:5px;padding:4px;background:var(--panel);cursor:zoom-in}
+  .lb-gridcell.cur{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  .lb-gridcell img{display:block;width:100%;height:auto;border-radius:3px}
+  .lb-gridcell .t{font-size:10px;color:var(--dim);font-family:ui-monospace,monospace;margin-top:3px;text-align:center}
+  #lb-err{color:var(--red);border:1px solid var(--red);background:rgba(224,108,108,.1);border-radius:6px;padding:10px 12px;font-size:12px;max-width:560px}
+  .lb-note{font-size:10.5px;color:var(--dim);padding-top:4px}
+  .ap-note{font-size:11px;color:var(--dim);padding:6px;border:1px dashed var(--border);border-radius:6px;margin:4px 0}
+  .ap-note b{color:var(--text)}
+  details.shots-panel{border-color:#3a3320}
+  details.shots-panel>summary .label{color:var(--amber)}
+  .shot-health{border:1px solid var(--amber);background:rgba(230,180,80,.07);border-radius:7px;padding:8px 10px;margin-bottom:10px;font-size:12px;color:var(--amber)}
+  .shot-health.ok{border-color:var(--border);background:transparent;color:var(--dim)}
+  .shot-health .big{font-weight:700}
+  .shot-health .fix{color:var(--text);display:block;margin-top:5px;font-size:11.5px}
+
+  /* ══════════ SUBAGENT ROSTER — every published subagent, inactive included ══════════
+     WHY THIS EXISTS. The operator saw the harness reporting 72 subagents while this page showed
+     a handful: the roster lived only in Mid, was sliced by the "agents shown" control (default 10,
+     hard cap 60 < 72), and was absent from High entirely, where the entity set is built from
+     agents-with-actions only. So the roster is now its own list with its own completeness line,
+     painted into every view, never sliced by a control that sizes the agent panels.
+     It is still BOUNDED — one thin line per row, hard cap SUBAGENTS_MAX — because the estate rule
+     is "no unbounded DOM growth"; the bound is stated on screen and the true total is never hidden. */
+  .sa-roster{border:1px solid var(--border);border-radius:7px;background:var(--panel2);overflow:hidden}
+  .sa-sum{font-size:12px;padding:7px 9px;background:var(--panel);border-bottom:1px solid var(--border)}
+  .sa-sum b{color:var(--text)}
+  .sa-legend{font-size:11px;color:var(--dim);padding:5px 9px;border-bottom:1px solid var(--border);line-height:1.9}
+  .sa-live{font-size:11px;color:var(--dim);padding:5px 9px;border-bottom:1px solid var(--border);font-family:ui-monospace,monospace}
+  .sa-frozen{border:1px solid var(--amber);background:rgba(230,180,80,.07);color:var(--amber);
+    border-radius:6px;padding:6px 8px;margin:6px 9px;font-size:11.5px}
+  .sa-frozen .fix{color:var(--text);display:block;margin-top:4px}
+  .sa-group{border-bottom:1px solid var(--border)}
+  .sa-group:last-child{border-bottom:0}
+  .sa-grouphead{display:flex;align-items:center;gap:8px;padding:5px 9px;background:#171a1f;border-bottom:1px solid #1d2127;font-size:11.5px}
+  .sa-grouphead .pn{font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sa-grouphead .nums{margin-left:auto;font-family:ui-monospace,monospace;font-size:10.5px;color:var(--dim);white-space:nowrap}
+  .sa-row{display:flex;align-items:center;gap:7px;padding:4px 9px;border-bottom:1px solid #1d2127;font-size:12px}
+  .sa-row:last-child{border-bottom:0}
+  .sa-row:hover{background:#181b20}
+  .sa-row .sa-lab{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:min(44ch,100%)}
+  .sa-row .sa-unlab{font-weight:400;font-style:italic;color:var(--dim)}
+  .sa-row .sa-id{font-family:ui-monospace,monospace;font-size:10.5px;color:var(--dim);white-space:nowrap}
+  .sa-row .sa-note{margin-left:auto;font-family:ui-monospace,monospace;font-size:10.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:34ch}
+  /* activity mark: the WORD and the GLYPH differ, and the inactive chip is DASHED — so the state
+     reads with colour off, in greyscale, in a screenshot and to a screen reader. Colour is never
+     the only signal (estate rule). */
+  .sa-pill{display:inline-block;font-size:10px;font-weight:700;padding:1px 7px;border-radius:9px;
+    white-space:nowrap;border:1px solid transparent;letter-spacing:.2px}
+  .sa-pill.sa-run{background:rgba(76,217,123,.14);color:var(--green);border:1px solid var(--green)}
+  .sa-pill.sa-inact{background:rgba(139,147,161,.10);color:var(--dim);border:1px dashed var(--dim)}
+  .sa-pill.sa-other{background:rgba(180,140,255,.12);color:var(--purple);border:1px dotted var(--purple)}
+  /* mode chip: continuable is the RESUMABLE one, so it says so in words as well as colour */
+  .sa-mode{display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;
+    white-space:nowrap;border:1px solid var(--border);color:var(--dim)}
+  .sa-mode.resumable{color:var(--accent);border-color:var(--accent)}
+  .sa-clip{font-size:11px;color:var(--amber);padding:5px 9px;border-bottom:1px solid var(--border)}
+  .sa-q{background:#0d1013;color:var(--text);border:1px solid var(--border);border-radius:5px;
+    padding:3px 6px;font-size:11.5px;min-width:170px}
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">🐝 DSH Activity</span>
+  <span class="sub">subagents &amp; background jobs — live</span>
+  <div id="shot-mode-wrap">
+    <span class="shot-mode-cap">screenshots (requested)</span>
+    <div class="view-toggle" id="shot-mode">
+      <button data-shots="on">On</button>
+      <button data-shots="off">Off</button>
+    </div>
+    <span id="shot-mode-note">reading the flag…</span>
+  </div>
+  <div class="view-toggle" id="view-toggle">
+    <button data-view="simple" data-key="1">Simple</button>
+    <button data-view="mid" data-key="2">Mid</button>
+    <button data-view="high" data-key="3" class="active">High</button>
+  </div>
+  <span id="status"><span class="dot dead"></span>connecting…</span>
+</header>
+
+<main>
+  <div id="src-row" style="margin-bottom:10px">
+    <span id="source" class="src-badge stub">source unknown</span>
+    <span id="meta" class="dim" style="font-size:11px;margin-left:8px"></span>
+  </div>
+
+  <!-- ═══ CONTROLS — one shape per setting: editable number + presets + current/default/range ═══ -->
+  <section class="card" id="controls-card">
+    <h2>View controls <span class="dim">— each shows current · default · range. These change YOUR browser only; nothing on disk, no capture, no agent, is touched.</span></h2>
+    <div id="controls" class="ctl-grid"></div>
+    <div class="ctl-bulk" id="bulk"></div>
+    <!-- ★ THE SUBAGENT LIST FILTERS. Same .ctl shell as every other setting (criterion 12), but it
+         is a FILTER, not a numeric bound — the roster is never sliced by "agents shown". -->
+    <div class="ctl-grid" id="sa-controls" style="margin-top:10px"></div>
+    <div class="keys" id="keys-hint">
+      keyboard: <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> switch view ·
+      <kbd>c</kbd>/<kbd>f</kbd> all agents compact/full ·
+      <kbd>x</kbd>/<kbd>z</kbd> expand/collapse all ·
+      <kbd>Tab</kbd> to any control, <kbd>Enter</kbd>/<kbd>Space</kbd> to act ·
+      no-mouse fallbacks: <span class="mono">GET /operator/dsh-jobs/data</span> (raw JSON) ·
+      <span class="mono">GET /operator/dsh-jobs/shot/&lt;name&gt;</span> (one image)
+    </div>
+  </section>
+
+  <div id="load-state"></div>
+  <div id="mode-warn" style="display:none"></div>
+
+  <!-- ═══ SIMPLE ═══ -->
+  <section id="view-simple" style="display:none">
+    <div class="card">
+      <h2>Agents <span class="dim">— last few lines each</span></h2>
+      <div id="simple-agents"></div>
+    </div>
+    <div class="card">
+      <h2>Subagents <span class="dim">— all of them, inactive included (<span class="mono">activity: inactive</span> is published, not hidden)</span></h2>
+      <div id="sa-simple" class="sa-roster"></div>
+    </div>
+    <div class="card">
+      <h2>Background jobs</h2>
+      <div id="simple-jobs"></div>
+    </div>
+  </section>
+
+  <!-- ═══ MID ═══ -->
+  <section id="view-mid">
+    <div class="grid2">
+      <div class="card">
+      <h2>Agents &amp; subagents</h2>
+      <div id="mid-agents"></div>
+      <h2 style="margin-top:12px">Subagents <span class="dim">— every one the feed publishes</span></h2>
+      <div id="mid-subagents" class="sa-roster"></div>
+    </div>
+      <div class="card">
+        <h2>Background jobs</h2>
+        <div id="mid-jobs"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ HIGH ═══ -->
+  <section id="view-high" style="display:none">
+    <div class="card">
+      <h2>Agents — which ones exist and what each one did <span class="dim">(click a row to open that agent's panel)</span></h2>
+      <div id="legend"></div>
+    </div>
+    <!-- ★ THE SUBAGENT ROSTER, IN THE DEFAULT VIEW. Before this card the 72 inactive subagents had
+         no surface in High at all: the legend and the panels are built from agents that own actions
+         or shots, so a subagent with neither was unreachable here. -->
+    <div class="card">
+      <h2>Subagents <span class="dim">— every one the harness publishes, inactive included; the count line proves nothing is hidden</span></h2>
+      <div id="sa-high" class="sa-roster"></div>
+    </div>
+    <div class="card">
+      <h2>Per-agent activity <span class="dim">— each agent's log and its screenshots paired, in time order (click a row to expand)</span>
+        <span id="layout-note"></span></h2>
+      <div id="shot-health"></div>
+      <div id="agent-panels"></div>
+      <div class="hint" id="panels-hint"></div>
+    </div>
+  </section>
+</main>
+
+<!-- ═══ ONE lightbox for the whole page. Hidden and empty until a thumbnail is clicked, so it
+     costs one node and never one <img> per shot; the enlarged image is swapped into #lb-img
+     on demand. Nothing here changes the page underneath. ═══ -->
+<div id="lb" hidden role="dialog" aria-modal="true" aria-label="screenshot viewer">
+  <div class="lb-bar">
+    <button type="button" class="btn" data-lb="prev">‹ prev</button>
+    <button type="button" class="btn" data-lb="next">next ›</button>
+    <span id="lb-title" class="mono"></span>
+    <span class="grow"></span>
+    <button type="button" class="btn" data-lb="grid" id="lb-gridbtn">▦ all shots</button>
+    <button type="button" class="btn warn" data-lb="close">✕ close (Esc)</button>
+  </div>
+  <div class="lb-stage">
+    <img id="lb-img" alt="screenshot" hidden>
+    <div id="lb-err" hidden></div>
+    <div id="lb-grid" hidden></div>
+  </div>
+  <div class="lb-note">
+    keyboard: <kbd>←</kbd><kbd>→</kbd> step · <kbd>Esc</kbd> close ·
+    <kbd>g</kbd> contact sheet of the whole ring ·
+    the enlarged image is loaded on demand into ONE element (no per-shot full-size images anywhere);
+    nothing on disk is opened for writing and the page underneath is untouched.
+  </div>
+</div>
+
+<script>
+(function(){
+  'use strict';
+  var POLL_MS = 2000;               // default cadence; the feed's own pollIntervalMs wins
+  var pollMs = POLL_MS;             // the interval actually in force — SHOWN in the roster's live line
+  var pollTimer = null;
+  var currentView = 'mid';
+  var lastData = null;
+  var shotModeBusy = false;
+  var loadedOnce = false;
+  var $ = function(id){ return document.getElementById(id); };
+
+  // ════════════════════════════════════════════════════════════════════════════════
+  //  BOUNDS — stated once, enforced everywhere. The operator's rule: no unbounded
+  //  DOM growth. Every list below is capped, and the cap is shown in the UI.
+  //    agents shown      ≤ AGENTS_MAX   (60 panels+legend rows, however many exist)
+  //    events per agent  ≤ EVENTS_MAX   (100 rows; the writer's own action tail is finite)
+  //    shots per agent   ≤ SHOTS_MAX    (40 = the writer's ring cap, 40 images on disk)
+  //    chars per line    ≤ CHARS_MAX    (2000)
+  //    stream rows, all panels together ≤ ROWS_BUDGET (3000) — checked while building
+  //    subagent roster    ≤ SUBAGENTS_MAX  (400 thin rows; the true total is always stated)
+  //  The ring itself is capped at 40 by the WRITER; the page never asks for more.
+  // ════════════════════════════════════════════════════════════════════════════════
+  var AGENTS_MAX = 60, EVENTS_MAX = 100, SHOTS_MAX = 40, CHARS_MAX = 2000, ROWS_BUDGET = 3000;
+  // ★ SUBAGENTS_MAX — the SUBAGENT ROSTER's own bound, and the roster STATES it on screen.
+  //   The roster is NOT sized by AGENTS_MAX and NOT sliced by the "agents shown" control: a
+  //   subagent row is one thin line, while an agent panel is a details + stream + chips, so the two
+  //   populations are bounded separately and by different numbers. 400 lines of 8 fields is still
+  //   bounded; when the cap clips, the roster says how many matched and how many it drew.
+  var SUBAGENTS_MAX = 400;
+  // The roster's view filters are deliberately NOT persisted: a reload must always come back to
+  // EVERY published subagent, so a forgotten filter can never be the reason one is "missing".
+  var saState = {act:'all', mode:'all', q:''};
+
+  // One shape per setting: label · editable number · presets · current/default/range · why.
+  // `why` is the cost/limit shown AT the choice point, so the number is never a guess.
+  var CTL_DEFS = {
+    agents: {lab:'agents shown', def:10, min:1, max:AGENTS_MAX, presets:[1,5,10,20,40,'all'], unit:'agents',
+             why:'every agent shown costs one panel + one legend row; 60 is the hard cap this page enforces'},
+    events: {lab:'events / agent', def:5, min:1, max:EVENTS_MAX, presets:[1,5,10,20,40,'all'], unit:'events',
+             why:'"last 5 lines" is the default; the writer publishes a finite action tail, and 100 rows/agent is the cap'},
+    shots:  {lab:'shots / agent', def:5, min:1, max:SHOTS_MAX, presets:[1,5,10,20,40,'all'], unit:'shots',
+             why:'40 is the writer\'s RING CAP — only the newest 40 images exist anywhere, so "all" cannot exceed 40'},
+    chars:  {lab:'text / line', def:240, min:40, max:CHARS_MAX, presets:[80,140,240,500,'all'], unit:'chars',
+             why:'"all" = 2000 chars; text is clipped in the page (full text stays in the data route)'}
+  };
+  var DENSITIES = ['compact','full'];
+  var CTL_KEY = 'dshobs.ctl.v3';          // limits + default density (localStorage)
+  var DENS_PREF = 'dshobs.density.v3';     // per-agent density overrides
+  var OPEN_KEY = 'dshobs.openPanels.v3';  // open/closed per panel (sessionStorage)
+
+  function clampInt(v, d){
+    v = parseInt(v, 10);
+    if(!isFinite(v)) return d.def;
+    if(v < d.min) return d.min;
+    if(v > d.max) return d.max;
+    return v;
+  }
+  var ctl = {agents:10, events:5, shots:5, chars:240, density:'compact'};
+  try{
+    var saved = JSON.parse(localStorage.getItem(CTL_KEY) || '{}') || {};
+    Object.keys(CTL_DEFS).forEach(function(k){ if(saved[k] != null) ctl[k] = clampInt(saved[k], CTL_DEFS[k]); });
+    if(DENSITIES.indexOf(saved.density) >= 0) ctl.density = saved.density;
+  }catch(e){}
+  function saveCtl(){ try{ localStorage.setItem(CTL_KEY, JSON.stringify(ctl)); }catch(e){} }
+
+  var agentOv = {};   // per-agent: {density:'compact'|'full', all:bool}
+  try{ agentOv = JSON.parse(localStorage.getItem(DENS_PREF) || '{}') || {}; }catch(e){ agentOv = {}; }
+  function saveOv(){ try{ localStorage.setItem(DENS_PREF, JSON.stringify(agentOv)); }catch(e){} }
+
+  // Expansion state OUTLIVES the 2s re-render. ★ This is the fix for "the screenshot
+  // dropdown keeps undropping": the open/closed state is now keyed for EVERY panel
+  // (agent panels AND the captures panel), not only for panels that carry data-agent.
+  var openPanels = {};
+  try{ openPanels = JSON.parse(sessionStorage.getItem(OPEN_KEY) || '{}') || {}; }catch(e){ openPanels = {}; }
+  function persistOpen(){ try{ sessionStorage.setItem(OPEN_KEY, JSON.stringify(openPanels)); }catch(e){} }
+
+  function esc(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+  function clip(s, n){ s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n) + ' …' : s; }
+
+  // ════════════════════════════════════════════════════════════════════════════════════════════
+  //  THUMBNAILS + THE ONE LIGHTBOX
+  //  A thumbnail is a 59px button (25% of the 236px it used to render at) that is a real,
+  //  keyboard-focusable control — no mouse-only path. Clicking it (or pressing Enter on it)
+  //  opens the SAME lightbox every time: one overlay node, one #lb-img whose src is swapped on
+  //  demand. Nothing per-shot is created at full size, so the DOM cost of an enlarged view is
+  //  zero extra nodes; the contact sheet is built on demand and bounded by the ring (40).
+  // ════════════════════════════════════════════════════════════════════════════════════════════
+  var lbItems = [];       // the whole ring, oldest first — bounded by the writer's 40-shot cap
+  var lbI = 0;
+  var lbPrevBodyOverflow = null;
+  var lbPrevFocus = null;
+
+  function thumbHtml(file, src, ambiguous){
+    return '<button type="button" class="shot-tile" data-lb-file="'+esc(file)+'" ' +
+      'title="'+esc(file)+' — click to enlarge (Esc to close, ←/→ to step)" ' +
+      'aria-label="'+esc('enlarge screenshot '+file)+'">' +
+      '<img src="'+esc(src)+'" alt="'+esc(file)+'" loading="lazy" ' +
+           'onerror="var r=this.closest(\'.shot-row\'); if(r) r.classList.add(\'missing\');">' +
+      (ambiguous ? '<span class="amb" title="more than one agent was active — this pairing is a guess"></span>' : '') +
+      '</button>';
+  }
+
+  function buildLbIndex(){
+    var d = lastData || {};
+    var attr = d.shotAttribution || null;
+    var by = (attr && attr.byAgentId) || {};
+    var owner = {};
+    Object.keys(by).forEach(function(k){ (by[k] || []).forEach(function(r){ owner[r.file] = k; }); });
+    lbItems = ((d.screenshots) || []).slice()
+      .filter(function(s){ return s && s.file; })
+      .sort(function(a,b){ return (a.time||0) - (b.time||0); })
+      .slice(-SHOTS_MAX)
+      .map(function(s){ return {file: s.file, time: s.time, owner: owner[s.file] || null}; });
+  }
+
+  function lbEl(){ return $('lb'); }
+  function lbOpen(file){
+    buildLbIndex();
+    if(!lbItems.length) return;                  // nothing on disk ⇒ the viewer is unreachable
+    var i = 0;
+    for(var n=0;n<lbItems.length;n++){ if(lbItems[n].file === file){ i = n; break; } }
+    var el = lbEl();
+    if(el.hidden){
+      lbPrevFocus = document.activeElement;
+      // temporary, and restored on close — the page underneath must come back unchanged
+      lbPrevBodyOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      el.hidden = false;
+    }
+    lbShow(i);
+    var c = el.querySelector('[data-lb="close"]');
+    if(c && c.focus) c.focus();
+  }
+  function lbClose(){
+    var el = lbEl();
+    if(el.hidden) return;
+    el.hidden = true;
+    $('lb-img').removeAttribute('src');           // drop the enlarged image; nothing keeps it
+    $('lb-grid').hidden = true;
+    $('lb-grid').innerHTML = '';                  // the contact sheet does not linger either
+    $('lb-grid').removeAttribute('data-sig');
+    $('lb-img').hidden = false;
+    $('lb-err').hidden = true;
+    document.body.style.overflow = (lbPrevBodyOverflow == null ? '' : lbPrevBodyOverflow);
+    lbPrevBodyOverflow = null;
+    if(lbPrevFocus && lbPrevFocus.focus) lbPrevFocus.focus();
+    lbPrevFocus = null;
+  }
+  function lbShowGrid(on){
+    var g = $('lb-grid'), img = $('lb-img');
+    if(on){
+      lbBuildGrid();
+      g.hidden = false; img.hidden = true; $('lb-err').hidden = true;
+      $('lb-gridbtn').textContent = '▣ single view';
+    }else{
+      g.hidden = true; img.hidden = false;
+      $('lb-gridbtn').textContent = '▦ all shots ('+lbItems.length+')';
+      lbShow(lbI);
+    }
+  }
+  function lbBuildGrid(){
+    var g = $('lb-grid');
+    var sig = lbItems.map(function(x){ return x.file; }).join('|');
+    if(g.getAttribute('data-sig') === sig) return;      // reuse: never rebuild the same sheet
+    var html = lbItems.map(function(it, i){
+      return '<div class="lb-gridcell" data-lb-cell="'+i+'" title="'+esc(it.file+' · '+fmtTime(it.time))+'">'+
+        '<img src="'+esc('/operator/dsh-jobs/shot/' + encodeURIComponent(it.file))+'" loading="lazy" alt="'+esc(it.file)+'">'+
+        '<div class="t">'+esc(fmtTime(it.time))+'</div></div>';
+    }).join('');
+    g.innerHTML = html;
+    g.setAttribute('data-sig', sig);
+  }
+  function lbShow(i){
+    if(!lbItems.length){ lbClose(); return; }
+    if(i < 0) i = lbItems.length - 1;             // wrap: stepping past the end is not a dead end
+    if(i >= lbItems.length) i = 0;
+    lbI = i;
+    var it = lbItems[lbI];
+    $('lb-title').textContent = (lbI+1)+' of '+lbItems.length+' · '+it.file+' · '+fmtTime(it.time)+
+      (it.owner ? ' · paired ≈ with '+shortId(it.owner)+' (temporal guess, not a record)'
+                : ' · no agent could be paired with this capture');
+    if(!$('lb-grid').hidden){                       // keep the contact sheet's highlight in step
+      var cells = $('lb-grid').querySelectorAll('.lb-gridcell');
+      for(var c=0;c<cells.length;c++) cells[c].classList.toggle('cur', parseInt(cells[c].getAttribute('data-lb-cell'),10) === lbI);
+      return;
+    }
+    var img = $('lb-img'), err = $('lb-err');
+    img.hidden = false; err.hidden = true;
+    img.onerror = function(){
+      img.hidden = true; err.hidden = false;
+      err.innerHTML = '<b>This image did not load.</b> ' + esc(it.file) +
+        ' is not being served — most likely it aged out of the writer\'s 40-shot ring since this page last polled. ' +
+        '<span class="fix">→ remedy: press ✕ (or Esc) and the page re-reads the ring on its next poll; ' +
+        'or step with → to the next shot. This page never deletes a shot.</span>';
+    };
+    img.src = '/operator/dsh-jobs/shot/' + encodeURIComponent(it.file);
+    $('lb-gridbtn').textContent = '▦ all shots ('+lbItems.length+')';
+  }
+
+  lbEl().addEventListener('click', function(e){
+    var t = e.target;
+    if(t === lbEl()){ lbClose(); return; }          // backdrop click closes — no dead end
+    if(!t) return;
+    var cellEl = t.closest ? t.closest('[data-lb-cell]') : null;
+    if(cellEl){
+      lbShow(parseInt(cellEl.getAttribute('data-lb-cell'),10));
+      if(!$('lb-grid').hidden) lbShowGrid(true);    // stay in the sheet, keep the highlight
+      return;
+    }
+    var actEl = t.closest ? t.closest('[data-lb]') : null;
+    if(!actEl) return;
+    var act = actEl.getAttribute('data-lb');
+    if(act === 'close') lbClose();
+    else if(act === 'prev') lbShow(lbI - 1);
+    else if(act === 'next') lbShow(lbI + 1);
+    else if(act === 'grid') lbShowGrid($('lb-grid').hidden);
+  });
+  function shortId(id){ return String(id || '').slice(0,8); }
+  function fmtTime(ms){
+    if(ms == null) return '—';
+    var d = new Date(ms);
+    function p(n){ return (n<10?'0':'')+n; }
+    return p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+  }
+  function fmtAgo(ms){
+    if(ms == null) return 'never';
+    var s = Math.max(0, Math.round((Date.now()-ms)/1000));
+    if(s < 60) return s+'s ago';
+    var m = Math.floor(s/60); if(m < 60) return m+'m ago';
+    var h = Math.floor(m/60); if(h < 48) return h+'h ago';
+    return Math.floor(h/24)+'d ago';
+  }
+  function fmtDur(a,b){
+    if(a == null) return '';
+    var end = (b != null) ? b : Date.now();
+    var s = Math.max(0, Math.round((end-a)/1000));
+    if(s < 60) return s+'s';
+    var m = Math.floor(s/60); return m+'m'+(s%60)+'s';
+  }
+  function fmtDelta(ms){
+    if(ms == null) return '—';
+    if(Math.abs(ms) < 1000) return Math.round(ms)+'ms';
+    return (ms/1000).toFixed(1)+'s';
+  }
+  function pill(status, activity){
+    if(status === 'running') return '<span class="status-pill s-running">running</span>';
+    if(status === 'stopping') return '<span class="status-pill s-stopping">stopping</span>';
+    if(status === 'completed') return '<span class="status-pill s-completed">completed</span>';
+    if(status === 'failed') return '<span class="status-pill s-failed">failed</span>';
+    if(status === 'killed') return '<span class="status-pill s-killed">killed</span>';
+    if(activity === 'running') return '<span class="status-pill s-running">running</span>';
+    if(activity === 'inactive') return '<span class="status-pill s-inactive">inactive</span>';
+    return '<span class="status-pill s-inactive">—</span>';
+  }
+  function agentLabel(a, id){
+    if(!a) return id || '(unknown id)';
+    return a.title || a.label || (a.isRoot ? 'root session' : null) || a.id;
+  }
+  // ── the caps as used ──
+  function evCapFor(id){ return (agentOv[id] && agentOv[id].all) ? EVENTS_MAX : ctl.events; }
+  function shotCapFor(id){ return (agentOv[id] && agentOv[id].all) ? SHOTS_MAX : ctl.shots; }
+  function densityFor(id){
+    if(agentOv[id] && DENSITIES.indexOf(agentOv[id].density) >= 0) return agentOv[id].density;
+    return ctl.density;
+  }
+
+  // ── Controls ──────────────────────────────────────────────────────────────────
+  function ctlHtml(key){
+    var d = CTL_DEFS[key];
+    var chips = d.presets.map(function(p){
+      return '<button type="button" class="chip" data-ctl="'+key+'" data-val="'+p+'">'+p+'</button>';
+    }).join('');
+    return '<div class="ctl" data-ctlbox="'+key+'">'+
+      '<div class="ctl-top"><span class="ctl-lab">'+esc(d.lab)+'</span>'+
+        '<input class="ctl-num" type="number" id="num-'+key+'" data-num="'+key+'" '+
+          'min="'+d.min+'" max="'+d.max+'" step="1" value="'+ctl[key]+'" '+
+          'aria-label="'+esc(d.lab)+' (min '+d.min+', max '+d.max+', default '+d.def+')">'+
+        '<span class="chips">'+chips+'</span></div>'+
+      '<div class="ctl-val" data-val-for="'+key+'"></div>'+
+      '<div class="ctl-why">'+esc(d.why)+'</div></div>';
+  }
+  function densityCtlHtml(){
+    return '<div class="ctl" data-ctlbox="density">'+
+      '<div class="ctl-top"><span class="ctl-lab">default density / agent</span>'+
+        '<span class="chips">'+
+          '<button type="button" class="chip" data-ctl="density" data-val="compact">compact</button>'+
+          '<button type="button" class="chip" data-ctl="density" data-val="full">full</button>'+
+        '</span></div>'+
+      '<div class="ctl-val" data-val-for="density"></div>'+
+      '<div class="ctl-why">compact = the last N events, one line each (that is the "last 5 lines"); '+
+        'full = the whole action list in a scrollable box. Per-agent chips override this one.</div></div>';
+  }
+  function buildControls(){
+    $('controls').innerHTML = ['agents','events','shots','chars'].map(ctlHtml).join('') + densityCtlHtml();
+    $('sa-controls').innerHTML = saCtlHtml();
+    $('bulk').innerHTML =
+      '<span class="ctl-lab">all agents:</span>' +
+      '<button type="button" class="chip" data-bulk="expand">expand all</button>' +
+      '<button type="button" class="chip" data-bulk="collapse">collapse all</button>' +
+      '<button type="button" class="chip" data-bulk="compact">compact</button>' +
+      '<button type="button" class="chip" data-bulk="full">full</button>' +
+      '<button type="button" class="chip" data-bulk="showall">show everything</button>' +
+      '<button type="button" class="btn warn" data-bulk="reset">reset view…</button>';
+  }
+  function ctlValue(key){
+    if(key === 'density') return ctl.density;
+    return ctl[key];
+  }
+
+  // ── THE SUBAGENT LIST CONTROLS (filters, not bounds) ──────────────────────────────────────
+  // Same .ctl shell and the same .chip affordance as every other setting (criterion 12), so the
+  // operator does not learn a second grammar. What they do is NARROW the roster; the readout always
+  // states the full published population, so a filter can never make a subagent look absent.
+  function saCtlHtml(){
+    return '<div class="ctl" data-sactl="roster">'+
+      '<div class="ctl-top"><span class="ctl-lab">subagents list</span>'+
+        '<span class="chips">'+
+          '<button type="button" class="chip" data-sa-act="all">all</button>'+
+          '<button type="button" class="chip" data-sa-act="running">running only</button>'+
+          '<button type="button" class="chip" data-sa-act="inactive">inactive only</button>'+
+        '</span>'+
+        '<span class="chips">'+
+          '<button type="button" class="chip" data-sa-mode="all">any mode</button>'+
+          '<button type="button" class="chip" data-sa-mode="continuable">continuable</button>'+
+          '<button type="button" class="chip" data-sa-mode="one-shot">one-shot</button>'+
+        '</span>'+
+        '<input class="sa-q" type="search" id="sa-q" autocomplete="off" '+
+          'placeholder="search label / id / parent…" '+
+          'aria-label="narrow the subagent list by label, id or parent session">'+
+      '</div>'+
+      '<div class="ctl-val" data-sa-val="roster"></div>'+
+      '<div class="ctl-why">EVERY subagent the feed publishes is listed here, <b>inactive included</b> — '+
+        'this list is not sliced by “agents shown” (that control sizes the agent panels only). '+
+        'Cap '+SUBAGENTS_MAX+' rows; the readout names the true total whenever the cap clips. '+
+        'A “running only”/“inactive only” chip or a search narrows the list but never changes the total, '+
+        'and nothing here is saved — a reload always comes back to all of them.</div></div>';
+  }
+  function subsAll(){ return ((lastData && lastData.subagents) || []); }
+  function saTallies(subs){
+    var t = {total:subs.length, running:0, inactive:0, other:0, continuable:0, oneShot:0, otherMode:0, unlabelled:0};
+    subs.forEach(function(s){
+      if(s.activity === 'running') t.running++;
+      else if(s.activity === 'inactive') t.inactive++;
+      else t.other++;
+      if(s.mode === 'continuable') t.continuable++;
+      else if(s.mode === 'one-shot') t.oneShot++;
+      else t.otherMode++;
+      if(!s.label || String(s.label).trim() === '') t.unlabelled++;
+    });
+    return t;
+  }
+  function saMatches(s){
+    if(saState.act !== 'all' && String(s.activity || '') !== saState.act) return false;
+    if(saState.mode !== 'all' && String(s.mode || '') !== saState.mode) return false;
+    if(saState.q){
+      var hay = [s.label, s.id, s.kind, s.mode, s.activity, s.parentId].join(' ').toLowerCase();
+      if(hay.indexOf(saState.q) < 0) return false;
+    }
+    return true;
+  }
+  function paintSaControls(){
+    var box = document.querySelector('[data-sactl="roster"]'); if(!box) return;
+    var read = box.querySelector('[data-sa-val="roster"]');
+    var chips = box.querySelectorAll('.chip');
+    for(var i=0;i<chips.length;i++){
+      var c = chips[i];
+      var on = c.hasAttribute('data-sa-act') ? (c.getAttribute('data-sa-act') === saState.act)
+                                             : (c.getAttribute('data-sa-mode') === saState.mode);
+      c.classList.toggle('on', !!on);
+    }
+    if(!lastData){ read.textContent = 'waiting for the first read of /operator/dsh-jobs/data …'; return; }
+    var subs = subsAll(), t = saTallies(subs), m = subs.filter(saMatches);
+    var shown = Math.min(m.length, SUBAGENTS_MAX);
+    read.textContent = 'showing ' + shown + ' of ' + t.total + ' published' +
+      (m.length !== t.total ? ' · ' + m.length + ' match this filter at most' : ' · no filter: every published subagent is listed') +
+      ' · ' + t.running + ' running · ' + t.inactive + ' inactive' +
+      (t.other ? ' · ' + t.other + ' with no activity published' : '') +
+      ' · ' + t.continuable + ' continuable (resumable) · ' + t.oneShot + ' one-shot (not resumable)' +
+      (t.otherMode ? ' · ' + t.otherMode + ' with no mode published' : '') +
+      ' · ' + t.unlabelled + ' unlabelled (listed by kind + id)' +
+      ' · cap ' + SUBAGENTS_MAX;
+  }
+  function paintControls(){
+    Object.keys(CTL_DEFS).forEach(function(key){
+      var d = CTL_DEFS[key];
+      var el = document.querySelector('[data-ctlbox="'+key+'"]'); if(!el) return;
+      var num = el.querySelector('input[data-num]');
+      if(num && document.activeElement !== num) num.value = ctl[key];
+      var read = el.querySelector('[data-val-for="'+key+'"]');
+      var avail = availableFor(key);
+      read.textContent = 'showing ' + Math.min(ctl[key], avail) + ' of ' + avail +
+        ' · default ' + d.def + ' · range ' + d.min + '–' + d.max +
+        (ctl[key] !== d.def ? ' · changed' : '');
+      var chips = el.querySelectorAll('.chip');
+      for(var i=0;i<chips.length;i++){
+        var v = chips[i].getAttribute('data-val');
+        chips[i].classList.toggle('on', v !== 'all' && parseInt(v,10) === ctl[key]);
+      }
+    });
+    var db = document.querySelector('[data-ctlbox="density"]');
+    if(db){
+      var dc = db.querySelectorAll('.chip');
+      for(var j=0;j<dc.length;j++) dc[j].classList.toggle('on', dc[j].getAttribute('data-val') === ctl.density);
+      db.querySelector('[data-val-for="density"]').textContent =
+        'current ' + ctl.density + ' · default compact · per-agent chips override';
+    }
+  }
+  function availableFor(key){
+    var d = lastData || {};
+    if(key === 'agents') return entityIds().length || 0;
+    if(key === 'events'){                       // the richest agent, i.e. what "all" would buy
+      var mx = 0; Object.keys(actsByAgent()).forEach(function(k){ mx = Math.max(mx, actsByAgent()[k].length); });
+      return mx;
+    }
+    if(key === 'shots') return ((d.screenshots) || []).length || 0;
+    if(key === 'chars'){
+      var mc = 0; ((d.actions) || []).forEach(function(a){ mc = Math.max(mc, String(a.summary||'').length); });
+      return mc || 0;
+    }
+    return 0;
+  }
+  function setCtl(key, val){
+    if(key === 'density'){
+      if(DENSITIES.indexOf(val) < 0) return;
+      ctl.density = val;
+    }else{
+      var d = CTL_DEFS[key]; if(!d) return;
+      ctl[key] = clampInt(val === 'all' ? d.max : val, d);
+      // ★ commit the CLAMPED value back into the field. Without this, typing 9999 leaves
+      //   "9999" on screen while the state holds 100 — a control showing a value it is not
+      //   using is exactly the kind of lie this page must not tell.
+      var num = $('num-'+key);
+      if(num) num.value = ctl[key];
+    }
+    saveCtl(); paintControls(); if(lastData) render(lastData);
+  }
+
+  // ── View switching ──
+  function setView(b){
+    if(b !== 'simple' && b !== 'mid' && b !== 'high') return;
+    currentView = b;
+    var btns = $('view-toggle').querySelectorAll('button');
+    for(var i=0;i<btns.length;i++) btns[i].classList.toggle('active', btns[i].getAttribute('data-view')===b);
+    $('view-simple').style.display = (b==='simple')?'block':'none';
+    $('view-mid').style.display = (b==='mid')?'block':'none';
+    $('view-high').style.display = (b==='high')?'block':'none';
+    if(lastData) render(lastData);
+  }
+  $('view-toggle').addEventListener('click', function(e){
+    var b = e.target && e.target.getAttribute && e.target.getAttribute('data-view');
+    if(b) setView(b);
+  });
+  // #high / #simple / #mid deep-links the view, so a specific view can be opened
+  // (and headlessly rendered for verification) instead of always landing on Mid.
+  window.addEventListener('hashchange', function(){ setView(String(location.hash||'').replace('#','')); });
+
+  // ── Controls: clicks, number edits, bulk, keyboard ──
+  $('controls').addEventListener('click', function(e){
+    var t = e.target; if(!t || !t.getAttribute) return;
+    var key = t.getAttribute('data-ctl'), val = t.getAttribute('data-val');
+    if(key && val != null) setCtl(key, val);
+  });
+  $('controls').addEventListener('input', function(e){
+    var t = e.target; if(!t || !t.getAttribute) return;
+    var key = t.getAttribute('data-num'); if(!key) return;
+    var d = CTL_DEFS[key]; if(!d) return;
+    if(t.value === '') return;                       // let him clear it while typing
+    ctl[key] = clampInt(t.value, d);
+    saveCtl(); paintControls(); if(lastData) render(lastData);
+  });
+  $('controls').addEventListener('change', function(e){
+    var t = e.target; if(!t || !t.getAttribute) return;
+    var key = t.getAttribute('data-num'); if(!key) return;
+    setCtl(key, t.value);
+  });
+  $('sa-controls').addEventListener('click', function(e){
+    var t = e.target; if(!t || !t.getAttribute) return;
+    var a = t.getAttribute('data-sa-act'), m = t.getAttribute('data-sa-mode');
+    if(a) saState.act = a;
+    else if(m) saState.mode = m;
+    else return;
+    paintSaControls(); renderRoster();       // a filter is not a data change: repaint the roster only
+  });
+  $('sa-controls').addEventListener('input', function(e){
+    var t = e.target; if(!t || t.id !== 'sa-q') return;
+    // the field itself is NEVER re-rendered (the roster is), so typing cannot lose focus or reset
+    saState.q = String(t.value || '').trim().toLowerCase();
+    paintSaControls(); renderRoster();
+  });
+  $('bulk').addEventListener('click', function(e){
+    var b = e.target && e.target.getAttribute && e.target.getAttribute('data-bulk');
+    if(!b) return;
+    if(b === 'expand' || b === 'collapse'){
+      var on = (b === 'expand');
+      var ids = entityIds();
+      ids.forEach(function(id){ openPanels['agent:'+id] = on; });
+      openPanels['shots:captures'] = on;
+      persistOpen();
+    }else if(b === 'compact' || b === 'full'){
+      entityIds().forEach(function(id){ agentOv[id] = agentOv[id] || {}; agentOv[id].density = b; });
+      saveOv();
+    }else if(b === 'showall'){
+      entityIds().forEach(function(id){ agentOv[id] = agentOv[id] || {}; agentOv[id].all = true; });
+      agentOv.__captures = {all:true};
+      saveOv();
+    }else if(b === 'reset'){
+      // ★ Destructive-ish (his saved view), so it confirms AND says what is lost.
+      if(!window.confirm('Reset your view settings?\n\n' +
+        'Lost: the counts, the per-agent compact/full choices, the subagent-list filters you typed or ' +
+        'clicked, and which panels you had open — ' +
+        'in THIS browser only.\nNot lost: nothing on disk. The 40 screenshots, the screenshot-mode ' +
+        'flag, every agent and every subagent are untouched.')) return;
+      ctl = {agents:10, events:5, shots:5, chars:240, density:'compact'};
+      agentOv = {}; openPanels = {};
+      saState = {act:'all', mode:'all', q:''};
+      var qel = $('sa-q'); if(qel) qel.value = '';
+      saveCtl(); saveOv(); persistOpen();
+    }
+    paintControls(); if(lastData) render(lastData);
+  });
+  document.addEventListener('keydown', function(e){
+    if(e.metaKey || e.ctrlKey || e.altKey) return;
+    // ★ THE LIGHTBOX OWNS THE KEYBOARD WHILE IT IS OPEN. Otherwise pressing "1" in the viewer
+    //   would silently change the view stacked behind it — a state change he did not ask for.
+    if(!lbEl().hidden){
+      if(e.key === 'Escape'){ lbClose(); e.preventDefault(); }
+      else if(e.key === 'ArrowLeft'){ lbShow(lbI - 1); e.preventDefault(); }
+      else if(e.key === 'ArrowRight'){ lbShow(lbI + 1); e.preventDefault(); }
+      else if(e.key === 'g' || e.key === 'G'){ lbShowGrid($('lb-grid').hidden); e.preventDefault(); }
+      return;
+    }
+    var t = e.target || {};
+    var tag = (t.tagName || '').toUpperCase();
+    if(tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    var k = e.key;
+    if(k === '1'){ setView('simple'); }
+    else if(k === '2'){ setView('mid'); }
+    else if(k === '3'){ setView('high'); }
+    else if(k === 'c' || k === 'C'){ bulkDensity('compact'); }
+    else if(k === 'f' || k === 'F'){ bulkDensity('full'); }
+    else if(k === 'x' || k === 'X'){ entityIds().forEach(function(id){ openPanels['agent:'+id] = true; }); openPanels['shots:captures'] = true; persistOpen(); if(lastData) render(lastData); }
+    else if(k === 'z' || k === 'Z'){ entityIds().forEach(function(id){ openPanels['agent:'+id] = false; }); openPanels['shots:captures'] = false; persistOpen(); if(lastData) render(lastData); }
+    else return;
+    e.preventDefault();
+  });
+  function bulkDensity(v){
+    entityIds().forEach(function(id){ agentOv[id] = agentOv[id] || {}; agentOv[id].density = v; });
+    saveOv(); if(lastData) render(lastData);
+  }
+
+  // ── screenshot mode control ──
+  // The page never assumes the write landed: it POSTs, then re-reads /data and
+  // paints whatever the SERVER says the store now holds. A refusal or a
+  // non-confirming store must never be painted as a success.
+  // ★★ AND IT NEVER CLAIMS TO HAVE STOPPED THE CAPTURE while the writer is provably
+  //    still shooting: the label says "requested", and the note carries the measured
+  //    verdict from the server (`enforced`), not an assumption.
+  var shotMode = $('shot-mode');
+  shotMode.addEventListener('click', function(e){
+    var want = e.target && e.target.getAttribute && e.target.getAttribute('data-shots');
+    if(!want || shotModeBusy) return;
+    var enabled = (want === 'on');
+    if(lastData && lastData.screenshotMode && lastData.screenshotMode.enabled === enabled) return;
+    shotModeBusy = true;
+    setShotModeButtons(enabled, false);           // optimistic, undone by the re-read below
+    var btns = shotMode.querySelectorAll('button');
+    for(var i=0;i<btns.length;i++) btns[i].disabled = true;
+    fetch('/operator/dsh-jobs/screenshot-mode', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      cache:'no-store',
+      body: JSON.stringify({enabled: enabled, actor:'operator-panel'})
+    })
+      .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, status:r.status, body:j}; }); })
+      .catch(function(err){ return {ok:false, status:0, body:{error:String(err && err.message || err)}}; })
+      .then(function(res){
+        shotModeBusy = false;
+        for(var i=0;i<btns.length;i++) btns[i].disabled = false;
+        if(!res.ok || !res.body || res.body.ok === false){
+          flashModeError('could not change screenshot mode' +
+            (res.body && res.body.error ? (': ' + res.body.error) : ' (HTTP '+res.status+')'),
+            'the store did not confirm the write — treat the REQUESTED mode as unchanged; retry, or check ' +
+            'that var/dsh-observability/screenshot-mode.json is writable by the panel user');
+        }
+        return load();                              // authoritative re-read of the served state
+      });
+  });
+
+  function setShotModeButtons(enabled, unhonored){
+    var btns = shotMode.querySelectorAll('button');
+    for(var i=0;i<btns.length;i++){
+      var isOn = btns[i].getAttribute('data-shots') === 'on';
+      btns[i].classList.toggle('active', isOn === !!enabled);
+      btns[i].classList.toggle('unhonored', !!(unhonored && !enabled && !isOn));
+    }
+    shotMode.title = enabled ? 'screenshot capture REQUESTED on — the flag the writer is meant to read'
+                             : 'screenshot capture REQUESTED off — the flag the writer is meant to read';
+  }
+  function flashModeError(msg, fix){
+    var w = $('mode-warn');
+    w.className = 'warnbar';
+    w.style.display = 'block';
+    w.innerHTML = '⚠ ' + esc(msg) + (fix ? '<span class="fix">→ ' + esc(fix) + '</span>' : '');
+  }
+
+  // ── Rendering ──
+  function render(data){
+    lastData = data;
+    loadedOnce = true;
+    $('load-state').innerHTML = '';
+    var source = $('source');
+    var isLive = !!(data && data.live);
+    source.textContent = (data && data.source) ? data.source : 'no data source';
+    source.className = 'src-badge' + (isLive ? '' : ' stub');
+
+    var agents = (data && data.agents) || [];
+    var jobs = (data && data.jobs) || [];
+    var subagents = (data && data.subagents) || [];
+    var shots = (data && data.screenshots) || [];
+    var roots = (data && data.rootSessionIds) || [];
+    var sm = (data && data.screenshotMode) || null;
+    var attr = (data && data.shotAttribution) || null;
+
+    // status line
+    var dot = $('status');
+    var age = (data && data.generatedAt) ? (Date.now() - data.generatedAt) : Infinity;
+    var state = (age < 15000) ? 'live' : (age < 60000 ? 'stale' : 'dead');
+    dot.innerHTML = '<span class="dot '+state+'"></span>' +
+      (state==='live' ? 'live · '+Math.round(age/1000)+'s ago' :
+       state==='stale' ? 'stale · '+Math.round(age/1000)+'s ago' : 'no recent data');
+
+    // ── screenshot mode: paint the STORE's truth, and say plainly when the
+    //    writer is not honouring it. `enforced` is measured, not assumed.
+    var modeWarn = $('mode-warn');
+    var note = $('shot-mode-note');
+    if(!sm){
+      setShotModeButtons(!!(shots && shots.length), false);
+      modeWarn.style.display = 'none';
+      note.textContent = 'the store did not report a mode — showing what shots exist';
+    }else{
+      var unhonored = (sm.enabled === false && sm.enforced === false);
+      setShotModeButtons(!!sm.enabled, unhonored);
+      note.textContent = 'requested ' + (sm.enabled ? 'ON' : 'OFF') +
+        ' · stored ' + fmtTime(sm.updatedAt) +
+        (sm.enforced === true ? ' · writer honouring it'
+         : sm.enforced === false ? ' · ★ writer NOT honouring it'
+         : ' · too soon to tell');
+      if(unhonored){
+        modeWarn.className = 'warnbar';
+        modeWarn.style.display = 'block';
+        modeWarn.innerHTML = '⚠ <b>Screenshot capture is REQUESTED OFF but shots are still landing.</b> ' +
+          esc(sm.shotsSinceFlag) + ' shot(s) have arrived since the flag was written (' +
+          esc(fmtTime(sm.updatedAt)) + '), so the writer — Cordis Host plugin <span class="mono">dshobs-2</span> — ' +
+          'is provably still capturing. <b>Nothing was stopped.</b> ' +
+          '<span class="fix">→ What would stop it: that plugin must be redefined to read ' +
+          esc(sm.source) + ' before each capture. The change is written and unapplied at ' +
+          '<span class="mono">var/dsh-observability/dshobs-2-pkg-screenshot-flag.js</span>, and this page cannot ' +
+          'reach that plugin — it belongs to a DSH session that has ended, so no session can redefine it. ' +
+          'The 40 existing shots are retained; nothing was deleted.</span>';
+      }else if(sm.enabled === false && sm.enforced === 'unknown'){
+        modeWarn.className = 'warnbar calm';
+        modeWarn.style.display = 'block';
+        modeWarn.innerHTML = 'screenshot capture REQUESTED OFF — written ' + fmtTime(sm.updatedAt) +
+          '; too soon to say whether the writer has stopped (no newer shot yet). ' +
+          '<span class="fix">→ This page measures the claim: if a shot lands anyway, the warning turns red rather than ' +
+          'pretending the capture stopped.</span>';
+      }else{
+        modeWarn.style.display = 'none';
+      }
+    }
+
+    var shotCount = shots.length;
+    var meta = (agents.length)+' agents · '+jobs.length+' jobs · '+subagents.length+' subagents · '+
+               shotCount+' shots · capture requested ' + (sm ? (sm.enabled ? 'ON' : 'OFF') : '?');
+    if(attr) meta += ' · shots attributed ' + attr.attributedCount + '/' + attr.totalShots;
+    if(data && data.lastError) meta += ' · ⚠ '+data.lastError;
+    $('meta').textContent = meta;
+
+    // ★ THE POLL CADENCE IS THE FEED'S, WHEN THE FEED STATES ONE. The interval is not decoration:
+    //   it is what makes this list "real-time", so it is reconciled here and PRINTED in the roster's
+    //   live line. Clamped to 1s–10s so a silly value in the feed cannot spin the browser.
+    if(data && typeof data.pollIntervalMs === 'number'){
+      var want = Math.max(1000, Math.min(10000, Math.round(data.pollIntervalMs)));
+      if(want !== pollMs){ pollMs = want; armPoll(); }
+    }
+
+    paintControls();
+    paintSaControls();
+    buildLbIndex();
+    renderSimple(agents, jobs, roots);
+    renderMid(agents, subagents, jobs, roots);
+    renderRoster();
+    if(currentView === 'high') renderHigh(data);
+  }
+
+  // ══════════════ entity list — every agent that has a log or a shot ══════════════
+  function entityIds(){
+    var d = lastData || {};
+    var agents = (d.agents) || [], actions = (d.actions) || [], attr = (d.shotAttribution) || null;
+    var by = (attr && attr.byAgentId) || {};
+    var seen = {}, ids = [];
+    function add(k){ if(k && !seen[k]){ seen[k]=true; ids.push(k); } }
+    agents.forEach(function(a){ add(a.id); });
+    actions.forEach(function(ev){ add(String(ev.agentId || '')); });
+    Object.keys(by).forEach(add);
+    return ids.slice(0, AGENTS_MAX);      // ★ hard bound on panels AND legend rows
+  }
+  function entityInfo(){
+    var d = lastData || {};
+    var info = {};
+    ((d.agents) || []).forEach(function(a){ info[a.id] = a; });
+    return info;
+  }
+  function actsByAgent(){
+    var out = {};
+    ((lastData && lastData.actions) || []).forEach(function(ev){
+      var k = String(ev.agentId || '');
+      (out[k] = out[k] || []).push(ev);
+    });
+    return out;
+  }
+  function orderedEntityIds(){
+    var info = entityInfo(), ab = actsByAgent();
+    var attr = (lastData && lastData.shotAttribution) || null;
+    var by = (attr && attr.byAgentId) || {};
+    function lastAct(id){ var l = ab[id] || []; return l.length ? (l[l.length-1].time || 0) : 0; }
+    var ids = entityIds();
+    ids.sort(function(x,y){
+      var rx = (info[x] && info[x].isLive) ? 1 : 0, ry = (info[y] && info[y].isLive) ? 1 : 0;
+      if(rx !== ry) return ry - rx;
+      var d = lastAct(y) - lastAct(x);
+      if(d) return d;
+      return ((by[y]||[]).length) - ((by[x]||[]).length);
+    });
+    return ids;
+  }
+
+  function renderSimple(agents, jobs){
+    var ids = orderedEntityIds(), info = entityInfo(), ab = actsByAgent();
+    var ha = $('simple-agents');
+    var visible = ids.filter(function(id){ return (ab[id]||[]).length; }).slice(0, ctl.agents);
+    if(!visible.length){
+      ha.innerHTML = '<div class="empty"><b>No agent activity captured yet.</b><br>' +
+        'Each agent appears here with its last few lines as soon as the writer publishes an action for it. ' +
+        'If agents are working and this stays empty, the observability writer is not publishing — see the source badge above.</div>';
+    }else{
+      ha.innerHTML = visible.map(function(id){
+        var a = info[id], acts = ab[id] || [], n = evCapFor(id);
+        var tail = acts.slice(-n);
+        var head = '<div class="row">'+pill(null, a && a.isLive ? 'running':'inactive')+
+          '<span class="label">'+esc(agentLabel(a, id))+'</span>'+
+          '<span class="dim mono">'+shortId(id)+'</span>'+
+          '<span class="dim" style="margin-left:auto">'+acts.length+' events · last '+fmtAgo((acts[acts.length-1]||{}).time)+'</span></div>';
+        var lines = tail.map(function(ev){
+          return '<div class="row dim"><span class="mono" style="min-width:62px">'+fmtTime(ev.time)+'</span>'+
+            '<span class="mono">'+esc(ev.type)+'</span>'+
+            '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(clip(ev.summary, ctl.chars))+'</span></div>';
+        }).join('');
+        var more = acts.length > n ? '<div class="stream-note">…'+(acts.length-n)+' earlier event(s) not shown ' +
+          '(this agent shows '+n+' of '+acts.length+'; raise “events / agent”, or open High for its full scrollable list)</div>' : '';
+        return head + lines + more;
+      }).join('');
+    }
+    var hj = $('simple-jobs');
+    if(!jobs.length){ hj.innerHTML = '<div class="empty">no background jobs yet</div>'; }
+    else{
+      hj.innerHTML = jobs.map(function(j){
+        return '<div class="row">'+pill(j.status)+
+          '<span class="label">'+esc(j.label||j.id)+'</span>'+
+          '<span class="dim mono">'+esc(j.kind||'')+'</span>'+
+          '<span class="dim">'+fmtDur(j.startedAt,j.finishedAt)+'</span>'+
+          '</div>';
+      }).join('');
+    }
+  }
+
+  function renderMid(agents, subagents, jobs, roots){
+    var el = $('mid-agents');
+    var lines = [];
+    var byId = {}; agents.forEach(function(a){ byId[a.id]=a; });
+    var ordered = [];
+    var visited = {};
+    function addRec(id, d){
+      var a = byId[id]; if(!a || visited[id]) return; visited[id]=true; ordered.push({a:a,d:d});
+      agents.forEach(function(x){ if(x.parentSession===id) addRec(x.id, d+1); });
+    }
+    roots.forEach(function(r){ addRec(r, 0); });
+    agents.forEach(function(a){ if(!visited[a.id]) ordered.push({a:a,d:a.parentSession?1:0}); });
+
+    if(!ordered.length){ el.innerHTML = '<div class="empty">no agents yet</div>'; }
+    else{
+      ordered.slice(0, ctl.agents).forEach(function(o){
+        var a = o.a;
+        lines.push(
+          '<div class="row"><span style="min-width:'+(o.d*14)+'px;display:inline-block"></span>'+
+          pill(null, a.isLive?'running':'inactive')+
+          '<span class="label">'+esc(agentLabel(a, a.id))+'</span>'+
+          '<span class="dim mono">'+shortId(a.id)+'</span>'+
+          '</div>');
+        if(a.cwd) lines.push('<div class="row dim" style="padding-top:0"><span style="min-width:'+(o.d*14+14)+'px;display:inline-block"></span><span class="mono">cwd: '+esc(a.cwd)+'</span></div>');
+      });
+      if(ordered.length > ctl.agents) lines.push('<div class="stream-note">…'+(ordered.length-ctl.agents)+
+        ' more agent(s) not shown — raise “agents shown” (cap '+AGENTS_MAX+')</div>');
+      el.innerHTML = lines.join('');
+    }
+
+    // ★ SUBAGENTS ARE NOT RENDERED HERE ANY MORE. They used to be sliced by ctl.agents
+    //   ("agents shown", default 10, hard cap 60) exactly at this point — which is why the operator
+    //   saw 10 of 72 — and they had no surface in High at all. They are now ONE roster with its own
+    //   renderer and its own stated bound, painted into whichever view is active: renderRoster().
+
+    var mj = $('mid-jobs');
+    if(!jobs.length){ mj.innerHTML = '<div class="empty">no background jobs yet</div>'; }
+    else{
+      mj.innerHTML = jobs.map(function(j){
+        var pct = 0;
+        if(j.status==='completed'||j.status==='killed'||j.status==='failed') pct = 100;
+        else if(j.status==='running' && j.startedAt) pct = Math.min(95, Math.round((Date.now()-j.startedAt)/1000));
+        return '<div class="job-card"><div class="head">'+pill(j.status)+
+          '<span class="label">'+esc(j.label||j.id)+'</span>'+
+          '<span class="dim mono">'+shortId(j.id)+'</span>'+
+          '<span class="dim" style="margin-left:auto">'+fmtDur(j.startedAt,j.finishedAt)+'</span></div>'+
+          '<div class="dim" style="margin-top:3px;font-size:11px">kind: '+esc(j.kind||'?')+' · started '+fmtTime(j.startedAt)+
+          (j.ownerSession?' · owner <button type="button" class="chip" data-jump="'+esc(j.ownerSession)+'">'+shortId(j.ownerSession)+'</button>':' · unowned (the writer found no owning session)')+'</div>'+
+          (j.detail?'<div class="dim mono" style="margin-top:3px">'+esc(clip(String(j.detail), ctl.chars))+'</div>':'')+
+          '<div class="bar"><span style="width:'+pct+'%"></span></div></div>';
+      }).join('');
+    }
+  }
+
+  // ══════════════ THE SUBAGENT ROSTER — every published subagent, in every view ══════════════
+  // ★ WHY IT IS ITS OWN LIST. Measured before this change, in the live page:
+  //     #mid-subagents held 10 rows out of 73 (its note said "73 published … shown 10") because it
+  //     was sliced by ctl.agents; #legend held 4 rows and #agent-panels 4 panels, because
+  //     entityIds() is built from agents-with-actions + shot attribution and CONTAINS NO SUBAGENT
+  //     ROSTER AT ALL. So in the DEFAULT view (High) 69 of 73 subagent records had no surface, and
+  //     in Mid the control that bounded them was the AGENT control, whose maximum (60) is below the
+  //     population. The roster below is bounded by its own number, is painted into every view, and
+  //     states its own completeness on screen.
+  function saHostForView(v){
+    if(v === 'high') return $('sa-high');
+    if(v === 'simple') return $('sa-simple');
+    return $('mid-subagents');
+  }
+  function saActivityPill(activity){
+    var a = String(activity == null ? '' : activity);
+    if(a === 'running')  return '<span class="sa-pill sa-run">▶ running</span>';
+    if(a === 'inactive') return '<span class="sa-pill sa-inact">⏸ inactive</span>';
+    if(!a)               return '<span class="sa-pill sa-other">? no activity published</span>';
+    return '<span class="sa-pill sa-other">? '+esc(a)+'</span>';
+  }
+  function saModeChip(mode){
+    var m = String(mode == null ? '' : mode);
+    if(m === 'continuable') return '<span class="sa-mode resumable" title="this subagent can be resumed">continuable · resumable</span>';
+    if(m === 'one-shot')    return '<span class="sa-mode" title="this subagent cannot be resumed — it ran once">one-shot · not resumable</span>';
+    if(!m)                  return '<span class="sa-mode">mode not published</span>';
+    return '<span class="sa-mode">'+esc(m)+'</span>';
+  }
+  // ★ NO INVENTED NAMES. 34 of the 73 records have label: null — and the source store
+  //   (~/.dsh/storages/session_projcache/.../subagentCatalog) has no label for those ids either,
+  //   so the label genuinely does not exist. The row says "unlabelled" and carries the honest
+  //   identity it DOES have: kind + short id (the full id and parent id are in the row's title).
+  function saLabelCell(s){
+    if(s.label && String(s.label).trim() !== '') return '<span class="sa-lab">'+esc(s.label)+'</span>';
+    return '<span class="sa-lab sa-unlab">unlabelled</span>'+
+      '<span class="sa-id">· '+esc(s.kind || 'kind not published')+'</span>';
+  }
+  function saRowHtml(s, jumpable, parentTxt){
+    var meta = (s.depth != null ? 'depth ' + s.depth : 'depth ?') +
+      ' · ' + (s.kind || 'kind ?') +
+      ' · ' + (s.hasChildren ? 'has children' : 'no children');
+    var title = 'id ' + s.id +
+      ' · parent ' + (s.parentId || 'none published') +
+      ' · depth ' + (s.depth == null ? '?' : s.depth) +
+      ' · kind ' + (s.kind || '?') +
+      ' · activity ' + (s.activity == null ? '?' : s.activity) +
+      ' · mode ' + (s.mode || '?') +
+      ' · ' + (s.hasChildren ? 'has its own children' : 'no children') +
+      (s.label ? '' : ' · NO LABEL exists for this subagent in the feed or in the session store');
+    return '<div class="sa-row" data-sa-id="'+esc(s.id)+'" data-activity="'+esc(s.activity == null ? '' : s.activity)+'" '+
+        'data-mode="'+esc(s.mode == null ? '' : s.mode)+'" data-haslabel="'+((s.label && String(s.label).trim()) ? '1' : '0')+'" '+
+        'title="'+esc(title)+'">'+
+      saActivityPill(s.activity)+
+      saModeChip(s.mode)+
+      saLabelCell(s)+
+      '<span class="sa-id">'+esc(shortId(s.id))+'</span>'+
+      '<span class="sa-id">'+esc(meta)+'</span>'+
+      (jumpable ? '<button type="button" class="chip" data-jump="'+esc(s.id)+'">open its panel →</button>' : '')+
+      '<span class="sa-note">parent '+esc(parentTxt)+'</span>'+
+    '</div>';
+  }
+  function saParentText(pid, info, subsById){
+    if(!pid) return 'none published';
+    if(info[pid]) return agentLabel(info[pid], pid) + ' · ' + shortId(pid);
+    if(subsById[pid]) return 'subagent ' + (subsById[pid].label || 'unlabelled') + ' · ' + shortId(pid);
+    return shortId(pid) + ' (not an agent this page has a panel for)';
+  }
+  function renderRoster(){
+    var host = saHostForView(currentView);
+    if(!host) return;
+    // ONLY the active view's host is painted, and the other two are cleared: one live copy of the
+    // roster in the DOM at a time (no 3x duplication of 73 rows as the estate grows).
+    ['sa-simple','mid-subagents','sa-high'].forEach(function(id){
+      var el = $(id); if(el && el !== host) el.innerHTML = '';
+    });
+    host.innerHTML = rosterHtml();
+  }
+  function rosterHtml(){
+    var d = lastData || {};
+    var subs = subsAll();
+    var frozen = (d.live === false) || (d.stateStale === true);
+    if(!subs.length){
+      // EMPTY and FROZEN are different states (criterion 8) and each teaches its own next step.
+      return '<div class="empty" style="margin:9px"><b>No subagent is published right now.</b><br>' +
+        'Subagents come from the harness’s subagent Service, through the observability feed; this list ' +
+        'fills the moment one is spawned and never hides an inactive one. ' +
+        (frozen ? '★ The feed itself is NOT publishing, so nothing can appear until it does — see the ' +
+                  'source badge at the top and the raw JSON at <span class="mono">GET /operator/dsh-jobs/data</span>.'
+                : 'If subagents exist in the harness and this stays empty, the feed is not carrying them — ' +
+                  'check <span class="mono">GET /operator/dsh-jobs/data</span>.') + '</div>';
+    }
+    var info = entityInfo();
+    var subsById = {}; subs.forEach(function(s){ subsById[s.id] = s; });
+    var jumpIds = {}; entityIds().forEach(function(x){ jumpIds[x] = 1; });
+    var t = saTallies(subs);
+
+    var html = [];
+    // ── THE COMPLETENESS LINE. "Are they all here?" is answered in words, above the rows. ──
+    html.push('<div class="sa-sum"><b>'+t.total+' subagent(s) published by the harness feed</b> — ' +
+      '<b>showing all '+Math.min(t.total, SUBAGENTS_MAX)+'</b>' +
+      (t.total > SUBAGENTS_MAX ? ' of '+t.total+' (cap '+SUBAGENTS_MAX+')' : '') +
+      ' · <b>'+t.running+' running</b> · <b>'+t.inactive+' inactive</b>' +
+      (t.other ? ' · '+t.other+' with no activity published' : '') +
+      ' · <b>'+t.continuable+' continuable (resumable)</b> · <b>'+t.oneShot+' one-shot (not resumable)</b>' +
+      (t.otherMode ? ' · '+t.otherMode+' with no mode published' : '') +
+      ' · '+t.unlabelled+' unlabelled (listed by kind + id, no name invented)' +
+      '</div>');
+    // ── THE MARK LEGEND, IN WORDS. Colour is never the only signal. ──
+    html.push('<div class="sa-legend">every inactive subagent is LISTED here, never hidden — ' +
+      'the mark differs by word and glyph, not only by colour: ' +
+      saActivityPill('running') + ' vs ' + saActivityPill('inactive') +
+      ' · mode: ' + saModeChip('continuable') + ' can be resumed, ' + saModeChip('one-shot') + ' cannot' +
+      '</div>');
+    // ── LIVE LINE: the interval this list is rebuilt on, with a timestamp the DOM can be watched for.
+    html.push('<div class="sa-live">★ live: this roster is rebuilt from ' +
+      '<span class="mono">GET /operator/dsh-jobs/data</span> every <b>' + (pollMs/1000).toFixed(1) + 's</b>' +
+      (pollMs !== POLL_MS ? ' (the feed’s own pollIntervalMs)' : '') +
+      ' · last repaint <span id="sa-live">' + fmtTime(Date.now()) + '</span>' +
+      ' · the feed last published ' + fmtAgo(d.generatedAt) + '</div>');
+    if(frozen){
+      html.push('<div class="sa-frozen">★ THE FEED HAS STOPPED PUBLISHING' +
+        (d.liveReason ? ' — ' + esc(d.liveReason) : '') + '. This roster is the LAST set the feed ' +
+        'published (' + t.total + ' subagent(s)) and it is now FROZEN: no new subagent can appear here, ' +
+        'and an activity change cannot show. Nothing was deleted; the page keeps showing what it has ' +
+        'rather than blanking.' +
+        '<span class="fix">→ remedy: the subagent list is written by the observability Cordis plugin ' +
+        '(it reads the harness’s subagent Service, which the standalone screenshot writer does not have). ' +
+        'It must be running to update this list; screenshots and their ring continue independently.</span></div>');
+    }
+    if(t.total > SUBAGENTS_MAX){
+      html.push('<div class="sa-clip">roster cap '+SUBAGENTS_MAX+' reached — '+t.total+
+        ' subagents are published and '+(t.total-SUBAGENTS_MAX)+' are not drawn here. ' +
+        'Narrow the list with the “subagents list” controls above or the search box; the total above is ' +
+        'the true published count, so nothing is silently dropped.</div>');
+    }
+
+    // ── GROUPED BY PARENT, because the parent IS the structure the harness publishes. ──
+    var order = [], groups = {};
+    subs.forEach(function(s){ var k = s.parentId || '__none__'; if(!groups[k]){ groups[k] = []; order.push(k); } groups[k].push(s); });
+    var pref = [];
+    (((d.agents) || []).forEach(function(a){ pref.push(a.id); }));
+    (((d.rootSessionIds) || []).forEach(function(r){ if(pref.indexOf(r) < 0) pref.push(r); }));
+    order.sort(function(x,y){
+      var ix = pref.indexOf(x), iy = pref.indexOf(y);
+      if(ix < 0 && iy < 0) return 0;          // stable: keeps the feed's own order
+      if(ix < 0) return 1;
+      if(iy < 0) return -1;
+      return ix - iy;
+    });
+    var emitted = 0;
+    order.forEach(function(k){
+      var all = groups[k].filter(saMatches);
+      if(!all.length) return;
+      if(emitted >= SUBAGENTS_MAX) return;
+      var room = all.slice(0, SUBAGENTS_MAX - emitted);
+      emitted += room.length;
+      var gt = saTallies(all);
+      html.push('<div class="sa-group">'+
+        '<div class="sa-grouphead"><span class="pn">parent: '+esc(saParentText(k === '__none__' ? null : k, info, subsById))+'</span>'+
+          '<span class="nums">'+room.length+' of '+all.length+' shown · '+gt.running+' running · '+gt.inactive+' inactive · '+
+            gt.continuable+' continuable · '+gt.oneShot+' one-shot</span></div>'+
+        room.map(function(s){ return saRowHtml(s, !!jumpIds[s.id], saParentText(s.parentId, info, subsById)); }).join('')+
+      '</div>');
+    });
+    html.push('<div class="stream-note">subagents carry NO action log of their own in this feed: ' +
+      'actions are stamped with a session id, so a subagent appears as its own panel once it produces ' +
+      'actions. It is listed here whether or not it ever did — its activity, mode, kind, depth and parent ' +
+      'are what the feed publishes about it.</div>');
+    return html.join('');
+  }
+
+  // ══════════════ HIGH — the legend, the honest shot verdict, one panel per agent ══════════════
+  var ICON = {'tool':'▸','tool-result':'⤷','assistant':'✎','user':'☰'};
+
+  function renderHigh(data){
+    var agents = (data && data.agents) || [];
+    var actions = (data && data.actions) || [];
+    var subagents = (data && data.subagents) || [];
+    var jobs = (data && data.jobs) || [];
+    var shots = (data && data.screenshots) || [];
+    var attr = (data && data.shotAttribution) || null;
+    var sm = (data && data.screenshotMode) || null;
+    var shotsOn = sm ? !!sm.enabled : true;
+
+    var byAgent = (attr && attr.byAgentId) || {};
+    var unattributed = (attr && attr.unattributed) || [];
+    var ab = actsByAgent();
+    var info = entityInfo();
+    var ids = orderedEntityIds();
+
+    renderLegend(ids, info, ab, byAgent, unattributed, shots.length);
+
+    var host = $('agent-panels');
+    var rowsLeft = ROWS_BUDGET;
+    var truncatedAgents = 0;
+    var withAny = ids.filter(function(id){ return (ab[id]||[]).length || (byAgent[id]||[]).length; });
+    if(!withAny.length){
+      host.innerHTML = '<div class="empty"><b>No activity captured yet.</b><br>' +
+        'Tool calls, messages and time-paired screenshots appear here under the agent that produced them, ' +
+        'as the harness runs them. ' +
+        (actions.length ? '' : 'The writer has published no actions at all yet. ') +
+        (shots.length ? (shots.length+' screenshot(s) exist on disk — they are shown in the captures panel below.')
+                      : 'No screenshots exist on disk yet.') + '</div>';
+      $('panels-hint').textContent = '';
+      renderShotHealth(attr, shots.length, byAgent, unattributed, shotsOn);
+      return;
+    }
+
+    var html = withAny.map(function(id){
+      if(rowsLeft <= 0){ truncatedAgents++; return ''; }
+      var built = agentPanelHtml(id, info[id], ab[id] || [], byAgent[id] || [], shotsOn, rowsLeft);
+      rowsLeft -= built.rows;
+      return built.html;
+    }).join('');
+
+    // ★ every screenshot is reachable even when the join fails — one bounded panel, and it
+    //   is the SAME persisted-panel machinery as the agent panels (fixes the undropping).
+    html += capturesPanelHtml(unattributed, agents, attr, shotsOn);
+
+    if(truncatedAgents) html += '<div class="ap-note">row budget ('+ROWS_BUDGET+' stream rows) reached — ' +
+      truncatedAgents + ' agent panel(s) not rendered at all. Lower “events / agent” or “shots / agent”, ' +
+      'or use the legend to open agents one at a time.</div>';
+    captureScroll(host);          // read position survives the swap (see applyPanelState)
+    host.innerHTML = html;
+    applyPanelState(host);
+    renderShotHealth(attr, shots.length, byAgent, unattributed, shotsOn);
+
+    // hint line: states the join honestly, and states the OFF case
+    var h = [];
+    if(attr){
+      h.push('shot→agent join key: ' + attr.joinKey);
+      h.push(attr.attributedCount + ' of ' + attr.totalShots + ' shots got an owner; ' +
+        attr.ambiguousCount + ' had more than one agent active inside the window (marked ≈ — those are a nearest-activity guess)');
+    }
+    h.push('★ the images capture the X11 window "' + ((lastData && lastData.screenshotTarget) || 'AionUi') +
+      '" — whichever AionUi TAB is on top. There is no per-agent screen: even a paired shot is a TIMED GUESS about which agent was driving, not visual proof of what it was doing.');
+    h.push('★ the writer records a shot as {file, time} and NOTHING else — no agent id exists on disk for any image, so no pairing here can be a record lookup.');
+    h.push('bounds: ≤'+AGENTS_MAX+' panels · ≤'+EVENTS_MAX+' events/agent · ≤'+SHOTS_MAX+' shots/agent · ≤'+ROWS_BUDGET+' stream rows in total (ring holds '+shots.length+')');
+    if(!shotsOn) h.push('screenshot capture is REQUESTED OFF: no new captures; earlier shots remain and are still shown here');
+    $('panels-hint').innerHTML = h.map(function(s){ return '· '+esc(s); }).join('<br>');
+  }
+
+  function renderLegend(ids, info, ab, byAgent, unattributed, shotTotal){
+    var el = $('legend');
+    var rows = ids.slice(0, ctl.agents);
+    if(!rows.length){ el.innerHTML = '<div class="empty">no agents published yet</div>'; return; }
+    el.innerHTML = rows.map(function(id){
+      var a = info[id], acts = ab[id] || [], shots = byAgent[id] || [];
+      var last = acts.length ? acts[acts.length-1] : null;
+      var what = last ? (last.type + ': ' + clip(last.summary, ctl.chars)) : 'no action published for this agent';
+      return '<button type="button" class="legend-row" data-jump="'+esc(id)+'" ' +
+        'title="'+esc(agentLabel(a,id)+' — '+what)+'">'+
+        pill(null, a && a.isLive ? 'running' : (a ? 'inactive' : null))+
+        '<span class="label">'+esc(agentLabel(a, id))+'</span>'+
+        '<span class="dim mono">'+shortId(id)+'</span>'+
+        '<span class="what">'+esc(what)+'</span>'+
+        '<span class="nums">'+acts.length+' ev · '+shots.length+' shots · '+fmtAgo(last ? last.time : null)+'</span>'+
+        '</button>';
+    }).join('') +
+    (ids.length > ctl.agents ? '<div class="stream-note">…'+(ids.length-ctl.agents)+
+      ' more agent(s) with activity not listed — raise “agents shown” (cap '+AGENTS_MAX+')</div>' : '') +
+    '<div class="stream-note">'+ids.length+' agent id(s) carry activity · '+shotTotal+
+      ' screenshot(s) on disk · '+unattributed.length+' of them have no owner at all' +
+      ' — the captures panel below shows those, kept not guessed.</div>';
+  }
+
+  // ★★ THE HONEST VERDICT ON THE PAIRING. The operator asked to see screenshots
+  //    "within the text areas on what they are working on". The truthful answer is
+  //    that per-agent screenshots DO NOT EXIST in this system, and the page must say
+  //    that rather than imply them: the writer stores no agent on a shot, and the
+  //    image is one window's active tab. This block states the measured numbers.
+  function renderShotHealth(attr, shotTotal, byAgent, unattributed, shotsOn){
+    var el = $('shot-health');
+    if(!shotTotal){
+      el.className = 'shot-health ok';
+      el.innerHTML = 'No screenshots on disk. They appear here once the writer captures one — the ring keeps the newest ' +
+        SHOTS_MAX + '.';
+      return;
+    }
+    var att = attr ? attr.attributedCount : 0;
+    var amb = attr ? attr.ambiguousCount : 0;
+    var health = (attr && attr.health) || (att === 0 ? 'none' : (att < shotTotal ? 'weak' : 'full'));
+    var pct = Math.round(100 * att / shotTotal);
+    var line;
+    if(health === 'none'){
+      el.className = 'shot-health';
+      line = '<span class="big">★ ' + shotTotal + ' screenshots exist and NOT ONE can be attributed to an agent.</span>'+
+        ' The join key is temporal (' + esc(attr ? attr.joinKey : 'shot.time → nearest preceding agent action') + '), ' +
+        'and in the window measured no agent action landed close enough to any capture in the ring' +
+        (attr && attr.reasonCounts ? ' (' + esc(JSON.stringify(attr.reasonCounts)) + ')' : '') + '. ' +
+        'So per-agent screenshots are NOT available here — the captures are shown together, unattributed, rather than guessed onto whoever looked nearest.';
+    }else if(health === 'full'){
+      el.className = 'shot-health ok';
+      line = shotTotal + ' screenshots, all paired by time. ' + amb + ' of them were ambiguous (more than one agent active — marked ≈).';
+    }else{
+      el.className = 'shot-health';
+      line = '<span class="big">' + att + ' of ' + shotTotal + ' screenshots (' + pct + '%) could be paired with an agent; ' +
+        unattributed.length + ' could not.</span> The pairing is temporal, not visual, and the missing ' +
+        unattributed.length + ' are shown unattributed. Do not read an agent\'s panel as a complete picture of that agent\'s work: ' +
+        'the image is the AionUi window\'s active tab, and the writer stores no agent on a shot.';
+    }
+    el.innerHTML = line +
+      '<span class="fix">→ What would make this real: the writer (Cordis plugin <span class="mono">dshobs-2</span>) would have to stamp ' +
+      'each capture with the agent it belongs to, or capture per-session surfaces. It stores {file, time} only, and that plugin ' +
+      'belongs to a session that has ended, so this page cannot change it. What this page CAN do — and does — is refuse to fabricate an owner.</span>' +
+      (shotsOn ? '' : '<span class="fix">→ Capture is REQUESTED OFF, so the ring will not grow; these images remain visible.</span>');
+  }
+
+  function agentPanelHtml(id, a, acts, shots, shotsOn, rowsLeft){
+    var label = a ? agentLabel(a, id) : id;
+    var live = !!(a && a.isLive);
+    var cls = 'agent-panel' + (live ? '' : ' muted');
+    var dens = densityFor(id);
+    var eCap = evCapFor(id), sCap = shotCapFor(id);
+
+    // ★ DENSITY — two shapes, switchable per agent (the operator's ask):
+    //   compact = the LAST eCap events + LAST sCap shots ("the last 5 lines of info")
+    //   full    = the whole action list within the HARD bounds, in a scrollable box
+    // Slicing the two streams separately (not the merged one) is deliberate: a burst of
+    // captures must not push the log out of the compact view.
+    var eKeep = (dens === 'full') ? EVENTS_MAX : eCap;
+    var sKeep = (dens === 'full') ? SHOTS_MAX  : sCap;
+    var keptActs = acts.slice(-eKeep), keptShots = shots.slice(-sKeep);
+
+    var stream = [];
+    keptActs.forEach(function(ev){ stream.push({t: ev.time || 0, kind:'act', ev: ev}); });
+    keptShots.forEach(function(s){ stream.push({t: s.time || 0, kind:'shot', s: s}); });
+    stream.sort(function(x,y){ return x.t - y.t; });
+
+    var total = acts.length + shots.length;
+    var shown = stream;
+    if(rowsLeft && shown.length > rowsLeft) shown = shown.slice(-rowsLeft);
+    var showingAll = (shown.length === total);
+
+    var rows = 0;
+    var body = shown.map(function(item){
+      rows++;
+      if(item.kind === 'act'){
+        var ev = item.ev;
+        var c = ev.type;
+        if(ev.type==='tool-result' && ev.summary && ev.summary.indexOf('ERROR')===0) c = 'tool-result err';
+        var full = String(ev.summary||'');
+        return '<div class="ev '+esc(c)+'">'+
+          '<span class="t">'+fmtTime(ev.time)+'</span>'+
+          '<span class="ico">'+esc(ICON[ev.type]||'·')+'</span>'+
+          '<span class="what" title="'+esc(full)+'">'+esc(clip(full, ctl.chars))+'</span></div>';
+      }
+      var s = item.s;
+      var src = '/operator/dsh-jobs/shot/' + encodeURIComponent(s.file);
+      var basis = s.basis === 'bracketed'
+        ? 'between this agent\'s own actions (Δt ' + fmtDelta(s.joinDeltaMs) + ' after its last)'
+        : (s.joinDeltaMs != null ? 'nearest agent to act before capture (Δt ' + fmtDelta(s.joinDeltaMs) + ')' : 'no join');
+      return '<div class="shot-row">'+
+        '<span class="t">'+fmtTime(s.time)+'</span>'+
+        thumbHtml(s.file, src, s.ambiguous) +
+        '<span class="shot-meta">screenshot of the AionUi window · <span class="k">≈ '+esc(basis)+'</span>'+
+          (s.ambiguous ? '<br><span class="k">≈ '+(s.candidates||[]).length+' agents were active inside the window — the nearest was chosen; this is a GUESS</span>' : '')+
+          '<br><span class="k">click the thumbnail to enlarge · if it fails to load it has aged out of the 40-shot ring</span>'+
+        '</span></div>';
+    }).join('');
+
+    var notes = [];
+    if(!stream.length){
+      notes.push('<div class="ap-note"><b>No tool calls or messages captured for this agent</b> in the writer\'s current window' +
+        (shotsOn ? '' : ' (and capture is requested off)') + '. ' +
+        'Actions appear here as the agent works; nothing is filtered out by this page.</div>');
+    }else if(!shots.length){
+      notes.push('<div class="ap-note">' +
+        (shotsOn
+          ? '<b>No screenshot is paired with this agent.</b> The writer stores no agent on a shot and this page refuses to guess, ' +
+            'so an unpaired capture stays in the captures panel instead of being placed here.'
+          : '<b>Capture is REQUESTED OFF</b> — no new captures for this agent; its log above is unaffected.') +
+        '</div>');
+    }
+    if(total > shown.length){
+      notes.push('<div class="stream-note">showing '+shown.length+' of '+total+' item(s) for this agent — ' +
+        'this is the ' + dens + ' view; compact shows the last '+eCap+' events and '+sCap+' shots, full shows up to ' +
+        EVENTS_MAX + ' events and ' + SHOTS_MAX + ' shots in a scrollable box' +
+        (rowsLeft <= 0 ? '; the page-wide row budget is also clipping here' : '') +
+        '. “show everything” raises this agent to the hard caps.</div>');
+    }else if(!showingAll){
+      notes.push('<div class="stream-note">showing all '+total+' item(s) this agent has.</div>');
+    }
+
+    var tools = '<div class="ap-tools">'+
+      '<span class="tl">this agent</span>'+
+      '<button type="button" class="chip'+(dens==='compact'?' on':'')+'" data-act="density" data-agent="'+esc(id)+'" data-val="compact">compact (last '+eCap+')</button>'+
+      '<button type="button" class="chip'+(dens==='full'?' on':'')+'" data-act="density" data-agent="'+esc(id)+'" data-val="full">full list</button>'+
+      '<button type="button" class="chip'+((agentOv[id]&&agentOv[id].all)?' on':'')+'" data-act="showall" data-agent="'+esc(id)+'">show everything</button>'+
+      '<span class="ctl-why">current: '+dens+' · compact = one line each, clipped to '+ctl.chars+' chars · ' +
+      'full = scrollable, wrapped · default for all agents: ' + ctl.density + ' · bounds '+EVENTS_MAX+' events / '+SHOTS_MAX+' shots</span>'+
+      '</div>';
+
+    var counts = acts.length + ' events · ' + shots.length + ' shots';
+    return {html: '<details class="'+cls+'" data-key="agent:'+esc(id)+'" data-agent="'+esc(id)+'">'+
+      '<summary>'+
+        '<span class="chev"></span>'+
+        pill(null, live ? 'running' : 'inactive')+
+        '<span class="label">'+esc(label)+'</span>'+
+        '<span class="dim mono">'+esc(shortId(id))+'</span>'+
+        '<span class="counts">'+esc(counts)+'</span>'+
+      '</summary>'+
+      '<div class="ap-body">'+tools+'<div class="stream '+dens+'">'+body+'</div>'+notes.join('')+'</div>'+
+    '</details>', rows: rows};
+  }
+
+  function capturesPanelHtml(unattributed, agents, attr, shotsOn){
+    if(!unattributed.length) return '';
+    var nameOf = {}; agents.forEach(function(a){ nameOf[a.id]=agentLabel(a, a.id); });
+    var cap = (agentOv.__captures && agentOv.__captures.all) ? SHOTS_MAX : ctl.shots;
+    var shown = unattributed.slice(-cap);
+    var body = shown.map(function(s){
+      return '<div class="shot-row">'+
+        '<span class="t">'+fmtTime(s.time)+'</span>'+
+        thumbHtml(s.file, '/operator/dsh-jobs/shot/' + encodeURIComponent(s.file), false) +
+        '<span class="shot-meta">unattributed — <span class="k">'+esc(s.reason||'no agent active in the window')+'</span>'+
+        (s.candidates && s.candidates.length ? '<br><span class="k">candidates seen in window (NOT assigned): '+
+           esc(s.candidates.map(function(c){ return nameOf[c]||shortId(c); }).join(', '))+'</span>' : '')+
+        '</span></div>';
+    }).join('');
+    var more = unattributed.length > shown.length
+      ? '<div class="stream-note">showing newest '+shown.length+' of '+unattributed.length+
+        ' unattributed captures — raise “shots / agent” or press “show everything”</div>' : '';
+    // ★ OPEN BY DEFAULT. This panel is the ONLY place these images exist, and it used to be
+    //   shut again by the next 2s re-render (the operator's "keeps undropping"). It is bounded
+    //   by "shots / agent" (default 5 of 40), so showing it costs a bounded number of rows.
+    var defaultOpen = '1';
+    return '<details class="agent-panel shots-panel" data-key="shots:captures" data-default-open="'+defaultOpen+'">'+
+      '<summary><span class="chev"></span>'+
+        '<span class="status-pill s-stopping">captures</span>'+
+        '<span class="label">'+unattributed.length+' screenshot(s) no agent can be paired with</span>'+
+        '<span class="counts">kept, never guessed onto an agent</span>'+
+      '</summary><div class="ap-body"><div class="ap-tools">'+
+        '<span class="tl">all unattributed</span>'+
+        '<button type="button" class="chip'+((agentOv.__captures&&agentOv.__captures.all)?' on':'')+'" data-act="showall" data-agent="__captures">show everything</button>'+
+        '<span class="ctl-why">these capture the AionUi window (whichever tab is on top) at the listed time; '+
+        'no agent id exists on disk for any of them. Thumbnails are 59px — 25% of the 236px they used to be, '+
+        'so they are an INDEX, not readable: click one to enlarge it (Esc closes, ←/→ steps, “all shots” is the contact sheet).</span></div>'+
+        '<div class="stream full">'+body+'</div>'+more+'</div></details>';
+  }
+
+  // ── panel open/closed state: ONE code path for every panel (criterion 12) ──
+  var scrollMemo = {};   // key -> scrollTop of that panel's scrollable stream
+  function captureScroll(host){
+    var ss = host.querySelectorAll('details[data-key]');
+    for(var i=0;i<ss.length;i++){
+      var k = ss[i].getAttribute('data-key');
+      var box = ss[i].querySelector('.stream.full');
+      if(box) scrollMemo[k] = box.scrollTop;
+    }
+  }
+  function applyPanelState(host){
+    var ds = host.querySelectorAll('details[data-key]');
+    for(var i=0;i<ds.length;i++){
+      var k = ds[i].getAttribute('data-key');
+      if(Object.prototype.hasOwnProperty.call(openPanels, k)) ds[i].open = !!openPanels[k];
+      else ds[i].open = ds[i].getAttribute('data-default-open') === '1';
+      // ★ RESTORE THE READ POSITION. The 2s poll re-renders these panels; without this, a
+      //   scroll through a full list snaps back to the top every 2 seconds — the same class of
+      //   bug as a panel that drops shut. Keyed by the same stable panel key.
+      if(Object.prototype.hasOwnProperty.call(scrollMemo, k)){
+        var box = ds[i].querySelector('.stream.full');
+        if(box) box.scrollTop = scrollMemo[k];
+      }
+    }
+    updateLayoutNote();
+  }
+  // The column count is the BROWSER's decision (grid auto-fit) — this only reports it, so the
+  // operator can see the reflow happened and a test can assert it. No JS layout, ever.
+  function updateLayoutNote(){
+    var host = $('agent-panels'), el = $('layout-note');
+    if(!el || !host) return;
+    var n = 0;
+    try{
+      var cols = window.getComputedStyle(host).gridTemplateColumns || '';
+      n = cols.split(' ').filter(function(x){ return x && x !== 'none'; }).length;
+    }catch(e){ n = 0; }
+    el.textContent = '· layout: ' + (n || 1) + ' column(s) at this width — automatic (narrow = 1, wide = side by side)';
+  }
+  window.addEventListener('resize', function(){ updateLayoutNote(); });
+  var panelsHost = $('agent-panels');
+  // ★ bound ONCE, outside render(): binding inside render leaked one listener per poll.
+  panelsHost.addEventListener('toggle', function(e){
+    var t = e.target;
+    if(t && t.tagName === 'DETAILS' && t.getAttribute('data-key')){
+      openPanels[t.getAttribute('data-key')] = !!t.open;
+      persistOpen();
+    }
+  }, true);
+  // per-agent chips + legend/job jumps + THUMBNAILS — delegated, so a re-render cannot orphan them.
+  // ★ closest(), NOT e.target: these are WIDE rows and buttons whose middle is a text span, so a
+  //   click in the middle lands on a child. Reading e.target directly made the legend row (and a
+  //   contact-sheet cell) dead exactly where the operator aims — a real bug, found by driving it.
+  panelsHost.addEventListener('click', function(e){
+    var t = e.target; if(!t) return;
+    var thumb = t.closest ? t.closest('[data-lb-file]') : null;
+    if(thumb){ e.preventDefault(); lbOpen(thumb.getAttribute('data-lb-file')); return; }
+    var chip = t.closest ? t.closest('[data-act]') : null;
+    if(!chip) return;
+    var act = chip.getAttribute('data-act'), id = chip.getAttribute('data-agent');
+    if(!act || !id) return;
+    e.preventDefault(); e.stopPropagation();
+    agentOv[id] = agentOv[id] || {};
+    if(act === 'density') agentOv[id].density = t.getAttribute('data-val');
+    else if(act === 'showall') agentOv[id].all = !agentOv[id].all;
+    saveOv();
+    openPanels['agent:'+id] = true;
+    if(id === '__captures') openPanels['shots:captures'] = true;
+    persistOpen();
+    if(lastData) render(lastData);
+  });
+  // ★ ONE jump affordance for every list that names an agent (legend rows, a job's owner chip):
+  //   it is the same chip/row shape and it lands in the same place — criterion 12, and the
+  //   cross-link that keeps a job's owner reachable without leaving the card (criterion 3).
+  document.addEventListener('click', function(e){
+    var t = e.target; if(!t) return;
+    var row = t.closest ? t.closest('[data-jump]') : null;
+    if(!row) return;
+    var id = row.getAttribute('data-jump');
+    if(!id) return;
+    e.preventDefault();
+    if(currentView !== 'high'){ setView('high'); }
+    else if(lastData) render(lastData);
+    openPanels['agent:'+id] = true;
+    persistOpen();
+    if(lastData) render(lastData);
+    var el = panelsHost.querySelector('details[data-key="agent:'+id+'"]');
+    if(el && el.scrollIntoView) el.scrollIntoView({block:'center'});
+  });
+
+  // ── the poll loop. ONE timer, re-armed only when the feed's stated interval actually changes, so
+  //    "the list updates in real time" is a single measurable cadence this page prints on screen. ──
+  function armPoll(){
+    if(pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(load, pollMs);
+  }
+  function load(){
+    return fetch('/operator/dsh-jobs/data', {cache:'no-store'})
+      .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+      .then(render)
+      .catch(function(err){
+        var source = $('source');
+        source.textContent = 'data source unavailable: ' + err.message;
+        source.className = 'src-badge stub';
+        $('status').innerHTML = '<span class="dot dead"></span>no data';
+        $('meta').textContent = 'the panel could not read the harness state file';
+        // ★ ERROR is its own visual state (criterion 8), and it carries cause + remedy + retry
+        $('load-state').innerHTML = '<div class="big-error"><b>Could not read the harness state.</b> ' +
+          esc(err.message) + ' — the page asks <span class="mono">GET /operator/dsh-jobs/data</span>, which reads ' +
+          '<span class="mono">var/dsh-observability/state.json</span> (written by Cordis plugin <span class="mono">dshobs-2</span>). ' +
+          '<div class="fix">→ Remedy: check the panel is up and that route answers — ' +
+          '<button type="button" class="chip" id="retry-btn">retry now</button> ' +
+          '<a class="mono" href="/operator/dsh-jobs/data" target="_blank" rel="noopener" style="color:var(--accent)">open the raw JSON</a>. ' +
+          'If the raw JSON answers but this page does not, the failure is in the page\'s fetch, not the writer.</div></div>';
+        var rb = $('retry-btn');
+        if(rb) rb.addEventListener('click', function(){ $('load-state').innerHTML = '<div class="loading">retrying…</div>'; load(); });
+      });
+  }
+
+  // ── boot ──
+  buildControls();
+  var loadingState = '<div class="loading">loading harness state from /operator/dsh-jobs/data … ' +
+    '(if this does not clear, the route or the writer is down — the error will name which)</div>';
+  $('load-state').innerHTML = loadingState;
+  paintControls();
+  paintSaControls();
+  // LOADING is its own state for the roster too (criterion 8): the card must not read as "no
+  // subagents" while the first read of /data is still in flight.
+  ['sa-simple','mid-subagents','sa-high'].forEach(function(id){
+    var el = $(id);
+    if(el) el.innerHTML = '<div class="loading" style="margin:9px">reading the subagent list from ' +
+      '/operator/dsh-jobs/data … (every published subagent is listed, inactive included)</div>';
+  });
+  // honour a #view deep-link before the first fetch so the first paint is already the right view
+  setView(String(location.hash || '').replace('#',''));
+  if(['simple','mid','high'].indexOf(String(location.hash||'').replace('#','')) < 0) setView('high');
+  load().then(function(){ if(!loadedOnce) $('load-state').innerHTML = loadingState; });
+  armPoll();
+})();
+</script>
+</body>
+</html>

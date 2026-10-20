@@ -1,0 +1,18 @@
+Walker — Voice Assistant Agent Harness
+Copyright 2026 the Walker authors
+
+This product includes software developed as part of the Walker project
+(https://github.com/heimdallthegatekeeper1/walker-voice-assistant-agent-harness).
+
+---
+
+Third-party components vendored in this repository:
+
+  Leaflet 1.9.4  —  stormwatch/vendor/
+    BSD-2-Clause. Copyright (c) 2010-2024 Volodymyr Agafonkin.
+    Copyright (c) 2010-2011 CloudMade. All rights reserved.
+    See CREDITS.md for the full licence text.
+
+External programs this software invokes but does not distribute
+(piper, llama.cpp, ollama, bubblewrap, systemd, xdotool) remain under
+their own licences. See requirements.txt and PORTING.md.

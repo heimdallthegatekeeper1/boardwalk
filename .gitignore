@@ -1,0 +1,30 @@
+__pycache__/
+*.pyc
+*.bak*
+*.log
+*.pid
+.env
+*.key
+*.pem
+secrets.json
+panel-token
+var/
+pointat-shots/
+operator/guide_focus.json
+operator/guide_moves.jsonl
+operator/point_to_feedback.jsonl
+operator/voicelog.jsonl
+
+# runtime artefacts created by running the panel
+*.lock
+notifications.db
+operator/service_check_cache.json
+operator/guide_backend_events.jsonl
+dev_feedback_outbox/
+launch_assist_sessions/
+dist/
+
+# runtime geometry/state written by the panel page and the overlay
+operator/panel_geometry.json
+operator/panel_front.json
+operator/point_to_voice.json

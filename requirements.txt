@@ -1,0 +1,5 @@
+# Python 3.11+; the panel uses the standard library only.
+# Debian/Ubuntu system packages:
+#   python3-gi gir1.2-gtk-3.0 gir1.2-atspi-2.0 python3-cairo
+#   tesseract-ocr imagemagick x11-utils
+# Optional: xdotool wmctrl

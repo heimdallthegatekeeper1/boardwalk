@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Grant Access — timed, scoped, expiring · KHAOSS</title>
+<!-- ═══════════════════════════════════════════════════════════════════════════════════════════
+     THE GRANT WIZARD. Operator spec 2026-09-21: "give me one… that gives you proper access so we
+     don't get slowed down… with time duration… local/cloud/remote… It needs to have the option of
+     containing a terminal or launching that terminal separately."
+     ★ IT DECIDES NOTHING. Every capability comes from the catalogue (code, not a form field) and the
+       TTL is explicit. The page shows the EXACT sudoers line before anything is issued — a grant
+       whose text you cannot read is a grant you are guessing about.
+     ══════════════════════════════════════════════════════════════════════════════════════════ -->
+<style>
+  :root{
+    --ink:#e8e6e2; --dim:#a9a5a0; --faint:#7c7873; --panel:#14161a; --card:#1b1e23;
+    --border:#2c3138; --accent:#7cc4ff; --gold:#d87848; --warn:#d99a2b; --red:#e5484d; --ok:#3f9e8f;
+  }
+  html,body{margin:0;padding:0;background:var(--panel);color:var(--ink);
+    font-family:ui-monospace,'DejaVu Sans Mono',Menlo,Consolas,monospace;font-size:14px;line-height:1.5}
+  .wrap{max-width:1000px;margin:0 auto;padding:22px 20px 60px}
+  h1{font-family:ui-serif,Georgia,'Times New Roman',serif;font-size:1.9em;font-weight:700;margin:0 0 4px}
+  .sub{color:var(--dim);margin-bottom:2px}
+  .tag{color:var(--faint);font-size:.82em;margin-bottom:18px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin:12px 0}
+  .step{display:flex;gap:14px;align-items:flex-start;margin:16px 0}
+  .num{flex:0 0 26px;height:26px;border-radius:50%;background:var(--accent);color:#0b0d10;
+    display:flex;align-items:center;justify-content:center;font-weight:700}
+  .body{flex:1}
+  label{color:var(--dim);font-size:.85em;display:block;margin-bottom:3px}
+  select,input,button{font-family:inherit;font-size:.9em;background:var(--panel);color:var(--ink);
+    border:1px solid var(--border);border-radius:5px;padding:6px 9px}
+  select:hover,input:hover,button:hover{border-color:var(--accent)}
+  button{cursor:pointer}
+  button.go{background:var(--ok);color:#08110f;border-color:var(--ok);font-weight:700;padding:9px 18px}
+  button.go:hover{filter:brightness(1.1)}
+  button.ghost{background:transparent}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .line{background:#0d0f12;border:1px solid var(--border);border-radius:5px;padding:8px 10px;
+    font-size:.85em;color:var(--gold);overflow-x:auto;white-space:pre}
+  .hint{color:var(--faint);font-size:.8em;margin-top:4px}
+  table{width:100%;border-collapse:collapse;font-size:.86em;margin-top:6px}
+  th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--border)}
+  th{color:var(--dim);font-weight:400}
+  .ok{color:var(--ok)} .warn{color:var(--warn)} .red{color:var(--red)} .dim{color:var(--dim)}
+  #term{margin-top:10px}
+
+  /* ── SUCCESS ───────────────────────────────────────────────────────────────────────────────
+     ★ WHY THIS IS PLAIN. Three attempts with @keyframes left the overlay at opacity:0 in this
+       browser — an element that is display:none when its animation is created can hold the `from`
+       keyframe forever, and this environment suppresses some animations outright. A success
+       indicator that does not appear is the worst possible failure for a success indicator, so it
+       is now SIZE and COLOUR, not motion: no keyframes on the show path, no transitions, nothing
+       that can fail to run. The checkmark is drawn statically. It cannot not-appear. */
+  #gw-success{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+    z-index:99999;background:#070d0c}
+  #gw-success.show{display:flex}
+  .gws-card{background:#0f1a18;border:3px solid var(--ok);border-radius:16px;padding:38px 52px;
+    text-align:center;max-width:660px;
+    box-shadow:0 0 0 1px rgba(63,158,143,.5),0 0 120px rgba(63,158,143,.65),0 0 40px rgba(63,158,143,.4) inset}
+  .gws-ring{width:112px;height:112px;margin:0 auto 16px;border-radius:50%;border:4px solid var(--ok);
+    display:flex;align-items:center;justify-content:center;background:rgba(63,158,143,.10);
+    box-shadow:0 0 34px rgba(63,158,143,.75)}
+  .gws-ring svg{width:66px;height:66px}
+  .gws-ring path{fill:none;stroke:#5ee6cf;stroke-width:8;stroke-linecap:round;stroke-linejoin:round}
+  .gws-card h2{margin:0 0 8px;font-family:ui-serif,Georgia,serif;font-size:2.1em;letter-spacing:.06em;
+    color:#5ee6cf;text-shadow:0 0 30px rgba(94,230,207,.8)}
+  .gws-line{color:var(--gold);font-size:.8em;word-break:break-all;margin:10px auto 2px}
+  .gws-sub{color:#cfe9e3;font-size:1.05em}
+  .gws-count{margin-top:14px;font-size:1.35em;color:#fff}
+  .gws-count b{color:#5ee6cf}
+  .gws-hit{margin-top:18px;color:var(--dim);font-size:.8em}
+  iframe.term{width:100%;height:280px;border:1px solid var(--border);border-radius:6px;background:#000}
+</style></head><body>
+<div class="wrap">
+
+  <!-- ★★ EMBED NOTE — 2026-09-23. The preceding session reported "I still can't expand/contract or
+       move the guide panel, and need to" while working with the wizard INSIDE the panel, where it is
+       loaded in an <iframe> (aionui-stack-panel.html, `grant-wizard-panel`). Native <select> popups
+       are drawn by the browser at the top level and CANNOT be positioned inside an iframe's own box,
+       so a long option list is clipped at the frame edge. That is a property of the EMBED, not a bug
+       in the wizard. The escape hatch has always existed (⧉ Open in its own window in the panel), but
+       nothing said the embed was the cause — so the restraint read as a broken dropdown, which is the
+       same shape as every other defect this estate has paid for: the surface not saying what it is.
+       ★ Shown ONLY when embedded (same-origin, so it is readable); the standalone window has no
+       restraint to explain. -->
+  <div id="gw-embed-note" style="display:none;margin:10px 0 14px;padding:10px 12px;border-radius:8px;
+       background:rgba(124,92,255,.10);border:1px solid rgba(124,92,255,.45);font-size:.92em">
+    <b>You are viewing this inside the control panel.</b> That embed is an <code>&lt;iframe&gt;</code>,
+    and a dropdown opened in here <b>cannot be drawn past the frame edge</b> — long option lists get
+    clipped. That is the embed, not the wizard.
+    <button onclick="window.open('/operator/grant-wizard','khaoss-grant','width=1020,height=880')"
+            style="margin-left:8px;padding:4px 10px;cursor:pointer">⧉ Open in its own window</button>
+    <span class="dim">— full dropdowns, and freely resizable.</span>
+  </div>
+  <script>
+    // Same-origin iframe, so this is readable. Wrapped because a cross-origin frame would THROW here,
+    // and a note that cannot decide whether it applies must stay hidden rather than guess.
+    try { if (window.self !== window.top) {
+      document.getElementById('gw-embed-note').style.display = 'block';
+    } } catch (_) { /* cross-origin — stay hidden */ }
+  </script>
+
+  <h1>Grant Access</h1>
+  <div class="sub">Timed, scoped, expiring — and it shows you the exact line first.</div>
+  <div class="tag">Nothing here is a form field that invents privilege: the capabilities come from a
+    catalogue in code, every grant carries a duration, and expiry is mechanical.</div>
+
+  <div class="step"><div class="num">1</div><div class="body">
+    <label for="gw-scope">WHO — the boundary this grant lives in</label>
+    <div class="row">
+      <select id="gw-scope" onchange="gwScope()">
+        <option value="host-root">host-root — root on THIS box, for a named script</option>
+        <option value="agent-local">agent-local — an agent on this machine</option>
+        <option value="agent-cloud">agent-cloud — a cloud-backed seat</option>
+        <option value="agent-remote">agent-remote — over headscale / a remote device</option>
+      </select>
+      <input id="gw-agent" placeholder="agent / seat (e.g. trading-leader)" size="28">
+    </div>
+    <div class="hint" id="gw-scope-note"></div>
+  </div></div>
+
+  <div class="step"><div class="num">2</div><div class="body">
+    <label for="gw-cap">WHAT — capability (from the catalogue)</label>
+    <select id="gw-cap" onchange="gwCap()" style="min-width:420px"></select>
+    <div class="hint" id="gw-why"></div>
+    <div class="line" id="gw-line">—</div>
+    <div class="hint">★ This is the ENTIRE grant. One script, those exact arguments. No shell, no wildcard. The entry names the ROOT-OWNED copy under /usr/local/lib/khaoss — the repo file is the source, and installing it is the applier's act — so editing the repo file does not change what runs as root.</div>
+  </div></div>
+
+  <div class="step"><div class="num">3</div><div class="body">
+    <label>HOW LONG — the duration</label>
+    <div class="row" id="gw-ttls"></div>
+    <div class="row" style="margin-top:6px">
+      <input id="gw-ttl" type="number" min="1" value="60" size="6" oninput="gwTtl()"><span class="dim">minutes</span>
+      <span class="dim" id="gw-exp"></span>
+    </div>
+  </div></div>
+
+  <div class="step"><div class="num">4</div><div class="body">
+    <label>TERMINAL</label>
+    <div class="row">
+      <label class="row" style="margin:0"><input type="radio" name="gw-term" value="none" checked onchange="gwTerm()"> no terminal</label>
+      <label class="row" style="margin:0"><input type="radio" name="gw-term" value="embed" onchange="gwTerm()"> contain one here</label>
+      <label class="row" style="margin:0"><input type="radio" name="gw-term" value="separate" onchange="gwTerm()"> launch it separately</label>
+    </div>
+    <div id="term"></div>
+  </div></div>
+
+  <div class="card">
+    <div class="row">
+      <button class="go" onclick="gwGrant()">⚡ Grant for the stated duration</button>
+      <button class="ghost" onclick="gwSweep()">Sweep expired</button>
+      <button class="ghost" onclick="gwLoad()">↻ Reload</button>
+      <span id="gw-said" class="dim"></span>
+    </div>
+  </div>
+
+  <h1 style="font-size:1.3em;margin-top:26px">Active grants</h1>
+  <div id="gw-grants" class="card">loading…</div>
+
+  <h1 style="font-size:1.3em">Unmanaged — permanent root nobody is tracking</h1>
+  <div id="gw-unman" class="card">…</div>
+
+</div>
+
+<div id="gw-success" onclick="gwHideSuccess()">
+  <div class="gws-card">
+    <div class="gws-ring"><svg viewBox="0 0 52 52"><path d="M14 27 l8 8 l16 -18"/></svg></div>
+    <h2>GRANTED</h2>
+    <div class="gws-sub" id="gws-cap">—</div>
+    <div class="gws-line" id="gws-what">—</div>
+    <div class="gws-count" id="gws-count">—</div>
+    <div class="gws-hit">click anywhere to dismiss</div>
+  </div>
+</div>
+
+<script>
+var GW = {data:null, ttl:60};
+
+function gwEsc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+
+async function gwLoad(){
+  document.getElementById('gw-said').textContent = 'reading…';
+  try{
+    var r = await fetch('/operator/grant-wizard/data', {cache:'no-store'});
+    GW.data = await r.json();
+  }catch(e){ document.getElementById('gw-said').textContent = 'could not read: '+e; return; }
+  var cats = GW.data.catalogue || {};
+  var sel = document.getElementById('gw-cap');
+  sel.innerHTML = Object.keys(cats).map(function(k){
+    return '<option value="'+gwEsc(k)+'">'+gwEsc(k)+'</option>';}).join('');
+  gwCap(); gwTtl(); gwScope();
+  gwRenderGrants(); gwRenderUnman();
+  document.getElementById('gw-said').textContent = '';
+}
+
+function gwCap(){
+  var k = document.getElementById('gw-cap').value;
+  var c = (GW.data && GW.data.catalogue && GW.data.catalogue[k]) || null;
+  if(!c){ document.getElementById('gw-line').textContent='—'; return; }
+  document.getElementById('gw-why').textContent = c.why;
+  var args = (c.allowed_args||[]).join(' ');
+  var _u = (GW.data && GW.data.user) || '<user>';
+  document.getElementById('gw-line').textContent =
+    _u + ' ALL=(root) NOPASSWD: ' + c.script + (args ? ' ' + args : '');
+  if(c.default_ttl_minutes){ document.getElementById('gw-ttl').value = c.default_ttl_minutes; gwTtl(); }
+}
+
+function gwTtl(){
+  GW.ttl = Math.max(1, parseInt(document.getElementById('gw-ttl').value||'60',10));
+  var mins=[15,60,240,1440,2880,10080];
+  document.getElementById('gw-ttls').innerHTML = mins.map(function(m){
+    var lbl = m<60 ? m+'m' : (m<1440 ? (m/60)+'h' : (m/1440)+'d');
+    return '<button class="ghost" onclick="gwSetTtl('+m+')">'+lbl+'</button>';}).join('');
+  var exp = new Date(Date.now() + GW.ttl*60000);
+  document.getElementById('gw-exp').textContent = 'expires ' + exp.toLocaleString();
+}
+function gwSetTtl(m){ document.getElementById('gw-ttl').value=m; gwTtl(); }
+
+function gwScope(){
+  var s = document.getElementById('gw-scope').value;
+  var notes = {
+    'host-root':'Issues a real sudoers entry on this box, scoped to one script + its exact args.',
+    'agent-local':'Recorded against the agent boundary. Not a sudoers entry — this is the capability ledger.',
+    'agent-cloud':'For a cloud-backed seat. Recorded and shown; nothing is silently applied.',
+    'agent-remote':'For a device over headscale. Recorded; the transport is the tailnet, not this form.'
+  };
+  document.getElementById('gw-scope-note').textContent = notes[s] || '';
+}
+
+function gwTerm(){
+  var v = (document.querySelector('input[name=gw-term]:checked')||{}).value || 'none';
+  var el = document.getElementById('term');
+  if(v === 'embed'){
+    el.innerHTML = '<iframe class="term" src="/operator/terminal" title="terminal"></iframe>' +
+      '<div class="hint">Embedded terminal — if nothing renders, the panel has no terminal route yet ' +
+      '(honest placeholder rather than a blank box that looks broken).</div>';
+  } else if(v === 'separate'){
+    el.innerHTML = '<button class="ghost" onclick="window.open(\'/operator/terminal\',\'khaoss-term\',' +
+      '\'width=900,height=560\')">↗ Launch terminal in its own window</button>';
+  } else { el.innerHTML=''; }
+}
+
+function gwShowSuccess(cap, line, minutes){
+  document.getElementById('gws-cap').textContent = cap;
+  document.getElementById('gws-what').textContent = line || '';
+  var until = Date.now() + minutes*60000;
+  var el = document.getElementById('gws-count');
+  document.getElementById('gw-success').classList.add('show');
+  document.getElementById('gw-success').style.opacity = '1';
+  clearInterval(window.__gwsT);
+  function tick(){
+    var s = Math.max(0, Math.floor((until - Date.now())/1000));
+    var d = Math.floor(s/86400), h = Math.floor(s%86400/3600), m = Math.floor(s%3600/60), ss = s%60;
+    el.innerHTML = (d? d+'d ':'') + (h||d? h+'h ':'') + m + 'm ' + ss + 's <b>remaining</b>';
+    if(s<=0){ clearInterval(window.__gwsT);
+      el.innerHTML = '<b>this grant has now EXPIRED — root withdrawn</b>'; }
+  }
+  tick(); window.__gwsT = setInterval(tick, 1000);
+  // ★ NO AUTO-DISMISS. It used to vanish after 4.2s — too fast to read, and my own verification
+  //   kept photographing an empty overlay because of it. A success you cannot read is not an
+  //   indicator. It stays until clicked (or Escape).
+  clearTimeout(window.__gwsHide);
+  document.addEventListener('keydown', function esc(e){
+    if(e.key === 'Escape'){ gwHideSuccess(); document.removeEventListener('keydown', esc); }});
+}
+function gwHideSuccess(){
+  document.getElementById('gw-success').classList.remove('show');
+  clearTimeout(window.__gwsHide);
+}
+
+// ★★★ 2026-09-23 — THE "granting…" DEAD END, CLOSED. Reported by the preceding session as
+//   *"the 'granting…' dead end (no timeout, no error)"* and left for a fresh session. Measured:
+//   `fetch` was given NO timeout, NO AbortController, and the button was never re-enabled. If the
+//   server accepted the connection and then never answered — which this estate has measured on
+//   `:7842` before, when an unguarded 60 s refresh wedged the origin's connection budget — the
+//   surface sat on `granting…` FOREVER. No error, no retry, no way to tell a hung grant from a
+//   grant that was issued and not yet recorded. ★ That is strictly worse than a refusal: a
+//   refusal tells the operator to act, while a permanent "granting…" tells him to WAIT, and the
+//   one thing he must never do with a root grant is walk away unsure whether it landed.
+//   ★ The fix is three properties, and each answers a different failure:
+//       TIMEOUT  — an explicit budget, so "hung" becomes "failed" and says so.
+//       ABORT    — the request is actually cancelled, not merely ignored; a live hung fetch keeps
+//                  holding one of the browser's ~6 connections per origin, which is the exact
+//                  mechanism that starved every tab on this port before.
+//       RE-ENABLE— the button returns, so the operator can retry rather than reload the page.
+//   ★ AND THE ANSWER IS READ BACK, NOT ASSUMED. After a grant that reported ok, the live grant
+//     list is re-read and the result REPORTED. The preceding session found a grant wizard that
+//     reported GRANTED for root it had not installed — a mechanism (`reconcile`) existed to catch
+//     it and nobody called it. A button that says "granted" on the strength of its own request's
+//     reply is the same defect waiting to happen, so this checks the store afterwards.
+var GW_BUSY = false;
+
+function gwSetBusy(on){
+  var b = document.querySelector('.go[onclick="gwGrant()"]') || document.querySelector('button.go');
+  if(b){ b.disabled = !!on; b.style.opacity = on ? '.6' : ''; b.style.cursor = on ? 'progress' : ''; }
+}
+
+async function gwGrant(){
+  if(GW_BUSY){ return; }                      // a second click must not double-issue a root grant
+  var cap = document.getElementById('gw-cap').value;
+  var scope = document.getElementById('gw-scope').value;
+  var agent = document.getElementById('gw-agent').value;
+  if(scope === 'host-root' && !cap){ alert('pick a capability'); return; }
+  if(scope !== 'host-root' && !agent){ alert('name the agent for a non-host-root grant'); return; }
+
+  GW_BUSY = true;
+  gwSetBusy(true);
+  var said = document.getElementById('gw-said');
+  // ★★ THE OUTCOME MUST OUTLIVE THE REFRESH. Measured by driving the timeout path: `finally` called
+  //   `gwLoad()`, which sets `gw-said` to "reading…" and then BLANKS it (line ~168), so the timeout
+  //   explanation I had just written was wiped before the operator could read it. He would have seen
+  //   the button re-enable with NO reason given — the same dead end wearing different clothes, and a
+  //   defect I introduced while fixing one. The final message is now captured and restored after the
+  //   refresh, so whatever the grant did is the last thing on screen.
+  var finalMsg = null;
+  var ctl = (typeof AbortController === 'function') ? new AbortController() : null;
+  // 90 s: long enough for a real install (apt/lynis-class work has been measured in this estate),
+  // short enough that a hung origin is named while the operator is still watching.
+  // ★ Overridable so the timeout path can be DRIVEN instead of argued about — a timeout nobody has
+  //   ever watched fire is a timeout we are hoping about. `window.GW_TIMEOUT_MS=3000` in a console
+  //   exercises it in three seconds; a test that needs 90 s of waiting is a test nobody runs.
+  var budget = (typeof window.GW_TIMEOUT_MS === 'number' && window.GW_TIMEOUT_MS > 0) ? window.GW_TIMEOUT_MS : 90000;
+  var to = setTimeout(function(){ if(ctl) ctl.abort(); }, budget);
+  said.textContent = 'granting… (' + Math.round(budget/1000) + ' s budget)';
+
+  try{
+    var r = await fetch('/operator/grant-wizard/action', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      signal: ctl ? ctl.signal : undefined,
+      body: JSON.stringify({action:'issue', capability:cap, ttl:GW.ttl, scope:scope, agent:agent})});
+    var j = await r.json();
+    if(j.ok){
+      gwShowSuccess(cap, document.getElementById('gw-line').textContent, GW.ttl);
+      // ★ READ THE ANSWER BACK. The grant's own reply is a claim; the live list is the measurement.
+      var verified = await gwVerifyGrant(cap, scope, agent);
+      if(verified === true){
+        finalMsg = '<span style="color:#4ec9b0">✓ granted AND present in the live grant list</span>';
+      } else if(verified === false){
+        finalMsg = '<span class="red">⚠ the grant reported ok but is NOT in the live grant list — do NOT trust this as granted. Re-read and retry.</span>';
+      } else {
+        finalMsg = 'granted (could not re-read the list to confirm — check the grants panel)';
+      }
+    } else {
+      // ★ FAILURE MUST BE AS LOUD AS SUCCESS. A refused grant that only whispers is how someone
+      //   walks away believing they granted something they did not.
+      var why = (j.error || j.output || 'refused');
+      finalMsg = '<span class="red">✗ REFUSED — ' + gwEsc(why) + '</span>';
+      alert('GRANT REFUSED\n\n' + why);
+    }
+  }catch(e){
+    // An abort is a TIMEOUT, and it must read as one — "failed: AbortError" tells the operator
+    // nothing about whether to retry or whether a grant may now be live.
+    var isTimeout = (e && (e.name === 'AbortError' || String(e).indexOf('abort') >= 0));
+    var _secs = Math.round(((typeof window.GW_TIMEOUT_MS === 'number' && window.GW_TIMEOUT_MS > 0) ? window.GW_TIMEOUT_MS : 90000)/1000);
+    finalMsg = isTimeout
+      ? '<span class="red">✗ NO ANSWER within ' + _secs + ' s — the request was CANCELLED. The grant may or may not have been issued: re-read the grant list below before retrying.</span>'
+      : '<span class="red">✗ failed: ' + gwEsc(e) + '</span>';
+  }finally{
+    clearTimeout(to);
+    GW_BUSY = false;
+    gwSetBusy(false);
+    // ★ restore the outcome AFTER the refresh, so the refresh cannot erase the answer.
+    try { await gwLoad(); } catch(_){}
+    if(finalMsg !== null){ said.innerHTML = finalMsg; }
+  }
+}
+
+// Is the capability we just issued actually IN the live list? null = could not tell (never guessed
+// as success). Matches on capability AND scope, because the same capability can be granted in more
+// than one scope and a loose match would confirm the wrong row.
+async function gwVerifyGrant(cap, scope, agent){
+  try{
+    var r = await fetch('/operator/grant-wizard/data', {cache:'no-store', signal: (typeof AbortSignal!=='undefined' && AbortSignal.timeout) ? AbortSignal.timeout(15000) : undefined});
+    var d = await r.json();
+    var rows = d.grants || d.active || d.issued || [];
+    if(!Array.isArray(rows)) return null;
+    for(var i=0;i<rows.length;i++){
+      var g = rows[i] || {};
+      var gcap = g.capability || g.cap || g.command || '';
+      var gscope = g.scope || '';
+      if(String(gcap) === String(cap) && (!gscope || !scope || String(gscope) === String(scope))) return true;
+    }
+    return false;
+  }catch(_){ return null; }
+}
+
+async function gwSweep(){
+  document.getElementById('gw-said').textContent = 'sweeping…';
+  try{
+    var r = await fetch('/operator/grant-wizard/action', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'sweep'})});
+    var j = await r.json();
+    document.getElementById('gw-said').textContent = j.message || (j.ok ? 'swept' : 'failed');
+  }catch(e){ document.getElementById('gw-said').textContent = 'failed: '+e; }
+  gwLoad();
+}
+
+function gwRenderGrants(){
+  var g = (GW.data && GW.data.grants) || [];
+  if(!g.length){ document.getElementById('gw-grants').innerHTML =
+    '<span class="dim">no grants — root is blocked by default (that is canon)</span>'; return; }
+  var h = '<table><tr><th>capability</th><th>expires</th><th>state</th><th>file</th></tr>';
+  g.forEach(function(x){
+    h += '<tr><td>'+gwEsc(x.capability)+'</td><td>'+gwEsc((x.expires_at||'').replace('T',' '))+
+         '</td><td class="'+(x.expired?'red':'ok')+'">'+(x.expired?'EXPIRED':'active')+
+         '</td><td class="dim">'+gwEsc(x.sudoers_file)+'</td></tr>';});
+  document.getElementById('gw-grants').innerHTML = h + '</table>';
+}
+
+function gwRenderUnman(){
+  var u = (GW.data && GW.data.unmanaged) || [];
+  document.getElementById('gw-unman').innerHTML = u.length
+    ? '<span class="warn">⚠ '+u.length+' permanent root entr'+(u.length===1?'y':'ies')+' with no TTL and no ledger: '+u.map(gwEsc).join(', ')+'</span>'
+    : '<span class="ok">✅ ledger and sudo agree — nothing unmanaged</span>';
+}
+
+gwLoad();
+</script></body></html>

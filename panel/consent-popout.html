@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KHAOSS · Consent</title>
+<!--
+  DUAL-SURFACE CONSENT POPOUT — one of TWO surfaces (this + the AionUi in-app banner) that read/write
+  the SAME store, so resolving here closes the AionUi banner too (and vice-versa). PORTABLE SURFACE:
+  consumes ONLY the /consent/* contract — no panel-internal assumptions.
+    GET  /consent/pending -> {pending:[{request_id,host,consumer,what,why,scope,duration,options[],deadline}], host}
+    POST /consent/resolve  {request_id, choice}
+    GET  /consent/audit   -> {audit:[...]}
+  SECURITY: a secret VALUE never appears here — this carries the DECISION only.
+-->
+<style>
+  :root { --bg:#0e0f13; --card:#171922; --bd:#272b38; --tx:#e6e8ee; --tx2:#9aa0b0; --gold:#e2b23c;
+          --grn:#3fb56a; --red:#e5484d; --amber:#e2a23c; }
+  @media (prefers-color-scheme: light){ :root{ --bg:#f5f6f8; --card:#fff; --bd:#dde0e6; --tx:#1a1c22; --tx2:#5a6072; } }
+  :root[data-theme="light"]{ --bg:#f5f6f8; --card:#fff; --bd:#dde0e6; --tx:#1a1c22; --tx2:#5a6072; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--tx); padding:14px; }
+  h1 { font-size:15px; margin:0 0 4px; display:flex; align-items:center; gap:8px; }
+  .sub { color:var(--tx2); font-size:12px; margin-bottom:12px; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--tx2); display:inline-block; }
+  .dot.live { background:var(--grn); }
+  .empty { color:var(--tx2); text-align:center; padding:30px 10px; border:1px dashed var(--bd); border-radius:10px; }
+  .req { background:var(--card); border:1px solid var(--bd); border-left:3px solid var(--gold); border-radius:10px; padding:12px 14px; margin-bottom:10px; }
+  .req .top { display:flex; justify-content:space-between; gap:8px; align-items:baseline; }
+  .tag { font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:var(--gold); border:1px solid var(--bd); border-radius:5px; padding:1px 6px; }
+  .host { font-size:11px; color:var(--tx2); }
+  .what { font-weight:600; margin:6px 0 2px; }
+  .why { color:var(--tx2); font-size:13px; }
+  .meta { color:var(--tx2); font-size:11px; margin:6px 0 10px; }
+  .btns { display:flex; flex-wrap:wrap; gap:6px; }
+  button { font:inherit; font-size:12px; padding:6px 12px; border-radius:7px; border:1px solid var(--bd); background:var(--card); color:var(--tx); cursor:pointer; }
+  button:hover { border-color:var(--gold); }
+  button.deny { border-color:transparent; }
+  button.deny:hover { border-color:var(--red); color:var(--red); }
+  .cd { font-variant-numeric:tabular-nums; }
+  .audit { margin-top:16px; border-top:1px solid var(--bd); padding-top:8px; }
+  .audit h2 { font-size:11px; text-transform:uppercase; color:var(--tx2); letter-spacing:.05em; margin:0 0 6px; }
+  .arow { font-size:11px; color:var(--tx2); padding:2px 0; font-family:ui-monospace,monospace; }
+</style>
+</head>
+<body>
+  <h1><span id="dot" class="dot"></span> Consent requests</h1>
+  <div class="sub" id="sub">connecting…</div>
+  <div id="list"></div>
+  <div class="audit"><h2>Recent decisions</h2><div id="audit"></div></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let lastOk = 0;
+
+function fmtAge(deadline){
+  const s = Math.max(0, Math.round(deadline - Date.now()/1000));
+  return s > 90 ? Math.round(s/60)+"m" : s+"s";
+}
+
+async function jget(u){ const r = await fetch(u, {cache:"no-store"}); if(!r.ok) throw new Error(r.status+" "+u); return r.json(); }
+
+async function resolve(id, choice){
+  const btns = document.querySelectorAll('[data-rid="'+id+'"] button');
+  btns.forEach(b=>b.disabled=true);
+  try{
+    const r = await fetch("/consent/resolve", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({request_id:id, choice})});
+    if(!r.ok){ const t = await r.text(); throw new Error(r.status+": "+t.slice(0,120)); }
+    await tick(); // refresh immediately (sync-close)
+  }catch(e){ alert("Resolve failed: "+e.message); btns.forEach(b=>b.disabled=false); }
+}
+
+function render(pending){
+  const list = $("#list");
+  if(!pending.length){ list.innerHTML = '<div class="empty">No pending requests. Everything asks first, and the door is closed until you open it.</div>'; return; }
+  list.innerHTML = pending.map(r => `
+    <div class="req" data-rid="${r.request_id}">
+      <div class="top"><span class="tag">${r.consumer}</span><span class="host">${r.host} · closes in <span class="cd" data-dl="${r.deadline}">${fmtAge(r.deadline)}</span></span></div>
+      <div class="what">${esc(r.what)}</div>
+      <div class="why">${esc(r.why)}</div>
+      <div class="meta">scope offered: <b>${esc(r.scope)}</b></div>
+      <div class="btns">
+        ${(r.options||[]).map(o => `<button class="${o.startsWith('deny')?'deny':''}" onclick="resolve('${r.request_id}','${o}')">${esc(o)}</button>`).join("")}
+      </div>
+    </div>`).join("");
+}
+
+function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+async function tick(){
+  try{
+    const d = await jget("/consent/pending");
+    render(d.pending || []);
+    lastOk = Date.now();
+    $("#dot").classList.add("live");
+    $("#sub").textContent = `host ${d.host} · ${(d.pending||[]).length} pending · deny-by-default on timeout`;
+  }catch(e){
+    $("#dot").classList.remove("live");
+    $("#sub").textContent = "consent endpoint unreachable: " + e.message + " (retrying)";
+  }
+  // live countdowns
+  document.querySelectorAll(".cd").forEach(el => { el.textContent = fmtAge(parseFloat(el.dataset.dl)); });
+}
+
+async function auditTick(){
+  try{
+    const d = await jget("/consent/audit");
+    $("#audit").innerHTML = (d.audit||[]).slice(-8).reverse().map(a =>
+      `<div class="arow">${new Date(a.ts*1000).toLocaleTimeString()} · ${a.event} · ${a.consumer||''} ${a.choice?('→ '+esc(a.choice)):''}</div>`).join("")
+      || '<div class="arow">no decisions yet</div>';
+  }catch(e){ /* audit is best-effort */ }
+}
+
+tick(); auditTick();
+setInterval(tick, 1500);
+setInterval(auditTick, 4000);
+</script>
+</body>
+</html>

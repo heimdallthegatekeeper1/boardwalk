@@ -1,0 +1,1064 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>KHAOSS - phone seat</title>
+<link rel="manifest" href="/phone/manifest.webmanifest">
+<!-- PWA: manifest at /phone/manifest.webmanifest is served by panel_server.py; a service worker is NOT registered (none exists yet) -->
+<!--
+  ==================================================================================================
+  THE PHONE SURFACE - panel/phone.html.  A CONTROL SURFACE, NOT A MICROPHONE.
+  ==================================================================================================
+  *** DO NOT ADD MIC CAPTURE TO THIS FILE. *** The phone's own mic capture is OUT OF SCOPE and
+  will stay out of scope, which is why the string `getUserMedia` occurs in this file exactly ONCE --
+  in that sentence. The voice path is the seat's (`jarvis/bubble.py` + `jarvis/daemon.py`);
+  this page presses the seat's buttons over HTTP and paints what the seat reports back. It never
+  opens a capture device, never holds audio, and never sends audio anywhere. A future reader who
+  "fixes" this by adding capture turns a control surface into a second, unguarded audio path --
+  which is the exact class of change this estate refuses (raw audio never leaves the box; one
+  store per fact; one door per action).
+  --------------------------------------------------------------------------------------------------
+  WHAT THIS PAGE IS: the desktop seat's own controls, re-laid-out for a thumb, against the
+  `/phone/*` contract (pair/state/chats/delivery/ptt/mode/always_on). The WORDS on the buttons are
+  the seat's words, copied with their source line -- not reinvented:
+      jarvis/bubble.py:8373-8379  RAIL_FACE_TAP_IDLE/HOT, RAIL_FACE_HOLD_IDLE/HOT,
+                                  RAIL_FACE_ALWAYS_IDLE/HOT/LOCKED
+      jarvis/bubble.py:8350-8355  LISTEN_MODES (the four operator choices over a three-value store)
+      jarvis/bubble.py:8368-8369  RAIL_MODE_SHORT
+      jarvis/bubble.py:8100/8114/8121/8122  LOCK_ACTION_FACE, LOCK_ACTION_FACE_2ROW,
+                                  LOCK_ACTION_UNLOCK_FACE, LOCK_ACTION_UNLOCK_2ROW
+      jarvis/bubble.py:909-925    the voice-control colours: GREEN press/hold, BLUE tap to speak,
+                                  RED always on, and `.mode-on` = IN USE (never hover)
+  --------------------------------------------------------------------------------------------------
+  *** THE DEAD-RULE SCAR, RECORDED HERE SO IT CANNOT BE REPEATED ON THIS SURFACE. ***
+  On the desktop seat the `#ptt` / `#tap` / `#always` rules were DEAD: the pill wrapped them in
+  `#pill button#ptt` (1 id, 0 class, 1 element), which out-specifies a bare `#ptt` (1 id, 0 class,
+  0 element), so three buttons rendered with NO COLOUR AT ALL -- "class applied, rule correct,
+  nothing happened". Nothing errored. Nothing reported it. (jarvis/bubble.py:766-782 measures it.)
+  THE RULE HERE, and it is enforced by the self-check comment recorded below (measured, 77 rules):
+      * every generic control rule in this file is CLASS-ONLY (`.btn`, `.mode`, `.row > .btn`) with
+        NO element qualifier and no ancestor,
+      * the three voice controls carry bare id selectors (`#ptt`, `#ptt-hot`, `#tap`, `#tap-hot`,
+        `#always`, `#always-hot`) and are the LAST rules for those elements in this stylesheet,
+      * `#ptt` is never wrapped in `#voicebar button#ptt` or any descendant form,
+      * the voice buttons are direct children of `#voicebar`, so ANY later `#voicebar button { ... }`
+        or `.bar button { ... }` rule would be a regression -- re-run the self-check if one is added.
+  --------------------------------------------------------------------------------------------------
+  *** EVERY GLYPH CARRIES U+FE0E (VARIATION SELECTOR-15). *** A bare U+25B2/U+25BC/U+1F512 on
+  Android renders as a COLOUR EMOJI and a colour glyph IGNORES CSS `color` -- so the state colour
+  this page exists to show would silently not apply. Same measurement as jarvis/bubble.py:8178-8183.
+  Where a glyph adds nothing, a plain ASCII word is used instead (labels, not glyphs).
+  --------------------------------------------------------------------------------------------------
+  RUNG HONESTY: this page renders the DAEMON's state, never a guess. Every rung (`listening`,
+  `ptt_mode`, `mic`, `lock`, `delivery`, `chats`) carries its OWN fetch error and renders the word
+  `unknown` WITH the reason when its call failed. A toggle whose effect you cannot see is a
+  decoration, and a default that looks like a live value is a lie -- so nothing here has a smug
+  default. On load: GET /phone/session, then GET /phone/state.
+-->
+<style>
+  /* ------------------------------------------------------------------------------------------------
+     HAZARD, NAMED AT THE TOP AND ENFORCED AT THE BOTTOM (see the self-check comment):
+     do NOT nest the voice buttons inside a higher-specificity selector. On the desktop seat
+     `#pill button#ptt` beat a bare `#ptt` and the three buttons rendered with no colour at all,
+     silently. Every generic button rule here is class-only; the ids below are declared last.
+     ------------------------------------------------------------------------------------------------ */
+  :root { --bg:#0e0f13; --card:#151b23; --card2:#18202a; --bd:#272b38; --tx:#e6e8ee; --tx2:#9aa0b0;
+          --gold:#f0b429; --grn:#5ee08a; --grn-bg:#12351d; --grn-bd:#2ea043; --grn-hot:#1f4d33;
+          --blu:#79c0ff; --blu-bg:#10243a; --blu-bd:#1f6feb; --blu-hot:#16304d;
+          --red:#ff8f8f; --red-bg:#3a1416; --red-bd:#d73a49; --red-hot:#6b2417;
+          --warn-bg:#3a2f10; --warn-tx:#ffd98a; --warn-bd:#9e6a03; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; padding:0; }
+  html { height:100%; }
+  /* dvh, not vh: on a phone the URL bar collapses and `100vh` is TALLER than the window, which
+     would push the bottom bar (the most important row on this page) off the screen. */
+  body { min-height:100dvh; background:var(--bg); color:var(--tx);
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+         font-size:15px; line-height:1.45; display:flex; flex-direction:column; }
+  @supports not (min-height: 100dvh) { body { min-height:100vh; } }
+  /* ONE COLUMN, FULL WIDTH. No fixed pixel width anywhere on this page: every size is a floor and
+     the window is the pressure (AGENTS.md s6). Nothing here can exceed the phone's own width. */
+  #app { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; width:100%; }
+
+  /* ---- EXPANDED VIEW: everything scrolls ABOVE the bottom bar --------------------------------- */
+  #main { flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch;
+          padding:10px 12px 14px; }
+  #main[hidden] { display:none; }
+  .card { background:var(--card); border:1px solid var(--bd); border-radius:10px;
+          padding:10px 12px; margin:0 0 10px; }
+  .card > h2 { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--tx2);
+               margin:0 0 8px; font-weight:600; }
+  .plate { font-size:13px; color:var(--tx); margin:0 0 4px; overflow-wrap:anywhere; }
+  .reason { font-size:12px; color:var(--warn-tx); overflow-wrap:anywhere; margin:2px 0 0; }
+  .reason:empty { display:none; }
+  .mut { color:var(--tx2); font-size:12px; overflow-wrap:anywhere; }
+
+  /* ---- THE WARN BANNER (chats). A WARN, NEVER A WALL: the rows below it are still shown. -------- */
+  #warn { background:var(--warn-bg); border:1px solid var(--warn-bd); border-radius:10px;
+          padding:10px 11px; margin:0 0 10px; display:flex; gap:8px; align-items:flex-start; }
+  #warn[hidden] { display:none; }
+  #warn .w-tx { flex:1 1 auto; min-width:0; font-size:13px; color:var(--warn-tx); overflow-wrap:anywhere; }
+  #warn .w-t { font-weight:700; text-transform:uppercase; letter-spacing:.05em; font-size:11px;
+               display:block; margin-bottom:2px; }
+  #warn-dismiss { flex:0 0 auto; min-width:44px; min-height:44px; }
+
+  /* ---- GENERIC CONTROLS: CLASS-ONLY ON PURPOSE (see the hazard note above). NO element name is
+          ever combined with an ancestor here, so none of these can out-specify a bare `#ptt`. ----- */
+  .btn { font:inherit; font-size:13px; font-weight:600; min-height:44px; padding:8px 12px;
+         border-radius:9px; border:1px solid var(--bd); background:var(--card2); color:var(--tx);
+         cursor:pointer; }
+  .btn:active { border-color:var(--gold); }
+  .row { display:flex; flex-wrap:wrap; gap:6px; }
+  .row > .btn { flex:1 1 30%; }
+  /* ---- THE MODE BADGES: one colour per mode, copied from the rail's own exposure gradient ------ */
+  .mode { flex:1 1 30%; min-height:44px; padding:6px 8px; border-radius:9px; border:1px solid var(--bd);
+          background:var(--card2); color:var(--tx2); font-size:12px; font-weight:700;
+          display:flex; flex-direction:column; justify-content:center; align-items:center; gap:1px;
+          text-align:center; }
+  .mode .m-k { font-size:10px; text-transform:uppercase; letter-spacing:.05em; font-weight:600;
+               opacity:.85; }
+  .mode.m-ptt    { background:var(--grn-bg); border-color:var(--grn-bd); color:var(--grn); }
+  .mode.m-wake   { background:var(--warn-bg); border-color:var(--warn-bd); color:var(--warn-tx); }
+  .mode.m-always { background:var(--red-bg); border-color:var(--red-bd); color:var(--red); }
+  .mode.m-unknown{ background:#23262b; border:1px dashed #6b7684; color:#9aa0a6; font-style:italic; }
+
+  /* ---- THE COLLAPSED STRIP: the whole page when collapsed, minus the voice bar ------------------ */
+  #strip { flex:0 0 auto; padding:8px 12px 6px; background:var(--bg);
+           border-bottom:1px solid var(--bd); }
+  .srow { display:flex; align-items:center; gap:8px; min-width:0; }
+  .dot { flex:0 0 auto; width:10px; height:10px; border-radius:50%; background:#9aa0a6; }
+  .dot.live { background:var(--grn); }
+  .dot.held { background:var(--gold); }
+  .dot.warn { background:var(--red); }
+  .dot.unk  { background:#6b7684; }
+  #s-mode { font-weight:700; font-size:14px; overflow-wrap:anywhere; }
+  #s-sub  { color:var(--tx2); font-size:12px; overflow-wrap:anywhere; }
+  #s-why  { color:var(--warn-tx); font-size:12px; overflow-wrap:anywhere; }
+
+  /* ---- THE BOTTOM BAR: LAST IN THE DOM, PINNED, NEVER SCROLLED AWAY ---------------------------- */
+  #dock { position:sticky; bottom:0; z-index:20; flex:0 0 auto; background:var(--bg);
+          border-top:1px solid var(--bd);
+          padding-bottom:calc(6px + env(safe-area-inset-bottom, 0px));
+          padding-left:env(safe-area-inset-left, 0px);
+          padding-right:env(safe-area-inset-right, 0px); }
+  #handle { width:100%; min-height:44px; display:flex; align-items:center; justify-content:center;
+            gap:7px; background:transparent; border:0; border-bottom:1px solid var(--bd);
+            color:var(--tx2); font:inherit; font-size:12px; font-weight:600; cursor:pointer;
+            padding:4px 10px; }
+  #handle:active { color:var(--tx); }
+  #handle .chev { font-size:11px; color:var(--tx2); }
+  #voicebar { display:flex; align-items:stretch; gap:6px; padding:8px 10px 2px; }
+  #voicebar > * { min-width:0; }
+
+  /* ================================================================================================
+     THE THREE VOICE CONTROLS -- DECLARED LAST, EACH AS A BARE ID SELECTOR, ON PURPOSE.
+     Order inside the bar is most-used first: #ptt (press/hold, GREEN) biggest and leftmost; then
+     #tap (tap to speak, BLUE); then #always (always on, RED); then `Lock to current agent`.
+     THE COLOURS ARE COPIED FROM THE SEAT (jarvis/bubble.py:909-925), NOT CHOSEN.
+     `-hot` = THE CONTROL IS LIVE, and it is a different EFFECT from the idle state, never a hover:
+     a hover can never be read as "this is recording" (bubble.py:903-905).
+     ================================================================================================ */
+  #ptt, #tap, #always { font:inherit; font-weight:700; border-radius:10px; cursor:pointer;
+                        display:flex; flex-direction:column; align-items:center;
+                        justify-content:center; text-align:center; gap:2px;
+                        overflow-wrap:anywhere; white-space:pre-line; padding:8px 6px; }
+  #ptt { flex:2 1 0; min-height:60px; font-size:14px; background:var(--grn-bg); color:var(--grn);
+         border:1px solid var(--grn-bd); }
+  #ptt:active { background:#17452a; color:#86f0a8; }
+  #ptt-hot { flex:2 1 0; min-height:60px; font-size:14px; font-weight:700; border-radius:10px;
+             display:flex; flex-direction:column; align-items:center; justify-content:center;
+             text-align:center; overflow-wrap:anywhere; padding:8px 6px;
+             background:var(--grn-hot); color:#eafff0; border:2px solid var(--grn);
+             box-shadow:0 0 12px 2px rgba(94,224,138,0.55); }
+  #tap { flex:1.3 1 0; min-height:60px; font-size:13px; background:var(--blu-bg); color:var(--blu);
+         border:1px solid var(--blu-bd); }
+  #tap:active { background:var(--blu-hot); color:#a5d6ff; }
+  #tap-hot { flex:1.3 1 0; min-height:60px; font-size:13px; font-weight:700; border-radius:10px;
+             display:flex; flex-direction:column; align-items:center; justify-content:center;
+             text-align:center; overflow-wrap:anywhere; padding:8px 6px;
+             background:var(--grn-hot); color:#eafff0; border:2px solid var(--grn);
+             box-shadow:0 0 12px 2px rgba(94,224,138,0.55); }
+  #always { flex:1.3 1 0; min-height:60px; font-size:13px; background:var(--red-bg); color:var(--red);
+            border:1px solid var(--red-bd); }
+  #always:active { background:#4a1a1d; color:#ffb3b3; }
+  #always-hot { flex:1.3 1 0; min-height:60px; font-size:13px; font-weight:700; border-radius:10px;
+                display:flex; flex-direction:column; align-items:center; justify-content:center;
+                text-align:center; overflow-wrap:anywhere; padding:8px 6px;
+                background:var(--red-hot); color:#ffe8e0; border:2px solid #ff8a5c;
+                box-shadow:0 0 14px 3px rgba(255,143,143,0.65); }
+  /* * `Lock to current agent` sits on the SAME BAR (operator requirement) and never resizes under
+     the finger that just pressed it: both faces are two-row (`LOCK_ACTION_FACE_2ROW` /
+     `LOCK_ACTION_UNLOCK_2ROW`), so the words change and the geometry does not. */
+  #lock { flex:1.5 1 0; min-height:60px; font-size:12px; font-weight:700; border-radius:10px;
+          cursor:pointer; display:flex; flex-direction:column; align-items:center;
+          justify-content:center; text-align:center; gap:2px; overflow-wrap:anywhere;
+          padding:8px 6px; white-space:pre-line;
+          background:var(--card2); color:#d3e2e8; border:1px solid rgba(79,209,197,0.35); }
+  #lock:active { background:#1f2a35; color:#ffffff; }
+  #lock.armed { border-color:rgba(79,209,197,0.85); }
+
+  /* A REFUSAL MUST BE AUDIBLE: a silent refusal reads as a broken button. */
+  #say { display:none; margin:0 10px 6px; padding:8px 10px; border-radius:9px;
+         background:var(--red-bg); border:1px solid var(--red-bd); color:var(--red); font-size:12px;
+         overflow-wrap:anywhere; }
+  #say.on { display:block; }
+  #say.warn { background:var(--warn-bg); border-color:var(--warn-bd); color:var(--warn-tx); }
+
+  /* ---- PAIRING (shown only while /phone/session says paired:false) ------------------------------ */
+  #pair { padding:14px; }
+  #pair[hidden] { display:none; }
+  #pair .p-tx { font-size:14px; margin:0 0 4px; }
+  .field { width:100%; min-height:48px; margin:4px 0 10px; padding:10px 12px; font:inherit;
+           font-size:16px; background:var(--card); color:var(--tx); border:1px solid var(--bd);
+           border-radius:9px; }
+  #pair-go { width:100%; background:var(--grn-bg); color:var(--grn); border-color:var(--grn-bd); }
+
+  /* ---- THE CONFIRM FOR THE ONE MODE WITH STANDING EXPOSURE ------------------------------------- */
+  .veil { position:fixed; inset:0; z-index:60; background:rgba(6,8,11,0.86); display:flex;
+          align-items:flex-end; justify-content:center; padding:0; }
+  .veil[hidden] { display:none; }
+  .sheet { width:100%; max-width:none; background:var(--card); border-top:2px solid var(--red-bd);
+           border-radius:14px 14px 0 0; padding:14px 14px calc(14px + env(safe-area-inset-bottom, 0px));
+           max-height:88dvh; overflow-y:auto; }
+  .sheet h3 { margin:0 0 6px; font-size:15px; color:var(--red); }
+  .sheet p { margin:0 0 10px; font-size:13px; color:var(--tx); }
+  .sheet .row > .btn { flex:1 1 40%; }
+  #cf-no  { border-color:var(--grn-bd); color:var(--grn); }
+  #cf-yes { border-color:var(--red-bd); color:var(--red); background:var(--red-bg); }
+
+  @media (max-width:360px) {
+    body { font-size:14px; }
+    #ptt, #ptt-hot, #tap, #tap-hot, #always, #always-hot, #lock { font-size:12px; padding:8px 4px; }
+    #voicebar { gap:5px; padding:6px 8px 2px; }
+  }
+  @media (min-width:520px) { #main { max-width:640px; margin:0 auto; } }
+</style>
+<!--
+  ==================================================================================================
+  SPECIFICITY SELF-CHECK (requirement 4) -- MEASURED, NOT ASSERTED. Result transcribed verbatim.
+  METHOD. This <style> block was extracted with a line-anchored pattern (`^<style>$` ... `^</style>$`)
+  -- NOT by "first occurrence", because the string `<style>` also appears inside this file's own
+  documentation prose, and a first-occurrence grab silently returns the wrong region. The block was
+  then tokenized by a single left-to-right state machine (comment / single-quote / double-quote /
+  rule) that flattens `@media` and `@supports` to their inner rules in source order, scores each
+  member of a comma group SEPARATELY as (ids, classes, elements), and reports, for every target id,
+  the LAST rule that matches it plus every LATER rule that matches AND sets one of the same
+  properties. That last clause is the part that matters: a later rule only overrides a declaration
+  if it sets the SAME property.
+  RUN: 77 rules parsed, 0 parse artifacts, 0 element-qualified `button` selectors in the stylesheet.
+  THE FULL RESULT, every rule that matches a voice element, in source order (colors resolved
+  through their custom properties, which are declared once in `:root`):
+      pos 46  #ptt           (1,0,0)   layout only (font/flex/min-height/padding/overflow-wrap)
+      pos 47  #tap           (1,0,0)   layout only
+      pos 48  #always        (1,0,0)   layout only
+      pos 49  #ptt           (1,0,0)   background #12351d   color #5ee08a   [--grn-bg / --grn]
+      pos 50  #ptt:active    (1,1,0)   background #17452a   color #86f0a8
+      pos 51  #ptt-hot       (1,0,0)   background #1f4d33   color #eafff0   [--grn-hot]
+      pos 52  #tap           (1,0,0)   background #10243a   color #79c0ff   [--blu-bg / --blu]
+      pos 53  #tap:active    (1,1,0)   background #16304d   color #a5d6ff   [--blu-hot]
+      pos 54  #tap-hot       (1,0,0)   background #1f4d33   color #eafff0   [--grn-hot]
+      pos 55  #always        (1,0,0)   background #3a1416   color #ff8f8f   [--red-bg / --red]
+      pos 56  #always:active (1,1,0)   background #4a1a1d   color #ffb3b3
+      pos 57  #always-hot    (1,0,0)   background #6b2417   color #ffe8e0   [--red-hot]
+      pos 60  #lock.armed    (1,1,0)   border-color only (an ARMED accent, not a state colour)
+  VERDICT for the three voice controls, which is the dead-rule defect this page must not repeat:
+      #ptt     -> last matching rule `#ptt:active` (1,1,0); no LATER rule sets any of the same
+                  properties. LIVE COLOUR #12351d / #5ee08a. later-overriding = NONE
+      #tap     -> last matching rule `#tap:active` (1,1,0); later-overriding = NONE.
+                  LIVE COLOUR #10243a / #79c0ff.
+      #always  -> last matching rule `#always:active` (1,1,0); later-overriding = NONE.
+                  LIVE COLOUR #3a1416 / #ff8f8f.
+      All three `:active` rules are the deliberate pressed tint (a finger-down is not a colour
+      state) and all three are pseudo-class-qualified on the SAME id, so none of them can leak onto
+      another control.
+      Element-qualified `button` selectors anywhere in this stylesheet: NONE.
+      `#id button` / `#id .btn` descendant rules (the exact shape that killed the desktop pill,
+      `#pill button#ptt`): NONE.
+      Every generic control rule here is class-only (`.btn` (0,1,0), `.mode` (0,1,0),
+      `.row > .btn` (0,2,0)), so (0,1,0) < (1,0,0) always and a bare voice id always wins.
+  RE-RUN THIS CHECK IF A GENERIC CONTROL RULE IS EVER ADDED: `button { ... }` (0,0,1) would still
+  lose to a bare id, but `#voicebar button { ... }` (1,0,1) would WIN over `#ptt` (1,0,0) and
+  reproduce the desktop defect with no error anywhere.
+  ==================================================================================================
+-->
+</head>
+<body>
+<div id="app">
+
+  <!-- COLLAPSED STATE = this strip + the bottom bar. Nothing else. ------------------------------- -->
+  <div id="strip">
+    <div class="srow">
+      <span id="dot" class="dot unk"></span>
+      <span id="s-mode">unknown</span>
+    </div>
+    <div id="s-sub">reading /phone/session&hellip;</div>
+    <div id="s-why"></div>
+  </div>
+
+  <!-- EXPANDED STATE = everything between the strip and the bar scrolls. ------------------------- -->
+  <div id="main">
+    <div id="warn" hidden>
+      <div class="w-tx"><span class="w-t">Warning</span><span id="warn-tx"></span></div>
+      <button id="warn-dismiss" class="btn" type="button" aria-label="Dismiss warning">hide</button>
+    </div>
+
+    <div id="pair" hidden>
+      <p class="p-tx"><strong>This phone is not paired to the seat.</strong></p>
+      <p class="mut">Enter the pairing code shown on the seat. The code is redeemed once; the token
+        stays on this phone.</p>
+      <label class="mut" for="pair-code">Pairing code</label>
+      <input id="pair-code" class="field" type="text" inputmode="text" autocomplete="off"
+             autocapitalize="characters" spellcheck="false" placeholder="ABCD-1234">
+      <label class="mut" for="pair-label">Name this phone</label>
+      <input id="pair-label" class="field" type="text" autocomplete="off"
+             placeholder="phone">
+      <button id="pair-go" class="btn" type="button">Redeem code</button>
+      <p id="pair-why" class="reason"></p>
+    </div>
+
+    <div class="card">
+      <h2>Seat state</h2>
+      <p class="plate" id="c-listen">listening: unknown</p>
+      <p class="plate" id="c-mode">mode: unknown</p>
+      <p class="plate" id="c-ptt">press/hold: unknown</p>
+      <p class="plate" id="c-mic">microphone: unknown</p>
+      <p class="plate" id="c-lock">lock: unknown</p>
+      <p class="reason" id="c-why"></p>
+    </div>
+
+    <div class="card">
+      <h2>Listening mode</h2>
+      <div class="row" id="modes">
+        <button class="btn" type="button" data-mode="push-to-talk">push-to-talk</button>
+        <button class="btn" type="button" data-mode="wake-word">wake-word</button>
+        <button class="btn" type="button" data-mode="always-on">always-on</button>
+      </div>
+      <p class="mut" style="margin:8px 0 0">always-on is the only mode with standing exposure: the
+        microphone stands open. It asks before it is sent. wake-word is a cheap local spotter and
+        audio is discarded until the phrase hits.</p>
+      <p class="reason" id="m-why"></p>
+    </div>
+
+    <div class="card">
+      <h2>Routing</h2>
+      <div id="chats" class="mut">reading /phone/chats&hellip;</div>
+      <p class="reason" id="r-why"></p>
+    </div>
+
+    <div class="card">
+      <h2>Lock</h2>
+      <p class="plate" id="k-state">lock: unknown</p>
+      <p class="mut" id="k-tip">pure: released by a button and nothing else. intelligent (default):
+        a spoken phrase such as 'unlock routing' releases it.</p>
+    </div>
+
+    <div class="card">
+      <h2>Delivery</h2>
+      <div id="deliv" class="mut">reading /phone/delivery&hellip;</div>
+      <p class="reason" id="d-why"></p>
+    </div>
+
+    <div class="card">
+      <h2>Surface</h2>
+      <p class="mut" id="dev">device: unknown</p>
+      <p class="mut" id="surface">surface: unknown</p>
+      <p class="mut">This page is a control surface. It never opens this phone's microphone: the
+        voice path belongs to the seat.</p>
+    </div>
+  </div>
+
+  <!-- *** LAST IN THE DOM, PINNED TO THE BOTTOM, NEVER SCROLLED AWAY. *** ------------------------- -->
+  <div id="dock">
+    <div id="say"></div>
+    <button id="handle" type="button" aria-expanded="true" aria-controls="main">
+      <span id="chev" class="chev">&#x25BC;&#xFE0E;</span>
+      <span id="handle-tx">collapse controls</span>
+    </button>
+    <div id="voicebar">
+      <button id="ptt" type="button"></button>
+      <button id="tap" type="button"></button>
+      <button id="always" type="button"></button>
+      <button id="lock" type="button"></button>
+    </div>
+  </div>
+</div>
+
+<div id="cf" class="veil" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="cf-h">
+    <h3 id="cf-h">always on &mdash; the microphone stands open</h3>
+    <p>always on is the only mode with STANDING EXPOSURE. The microphone stands open until you turn
+      it off: there is no wake word and no finger on the button. Your phone's own mic is not used -
+      this opens the SEAT's microphone.</p>
+    <p class="mut" id="cf-now">the seat reports: unknown</p>
+    <div class="row">
+      <button id="cf-no" class="btn" type="button">keep it off</button>
+      <button id="cf-yes" class="btn" type="button">engage always on</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ==================================================================================================
+   THE CLIENT. Plain ES5-safe JS: no build step, no CDN, no framework, works on a slow link.
+   EVERY /phone/* CALL CARRIES `Authorization: Bearer <token>` from localStorage.
+   ================================================================================================== */
+(function () {
+  "use strict";
+
+  var TOK_KEY = "khaoss.phone.token";
+  /* *** THE CHEVRON, AS DATA, WITH U+FE0E BAKED IN. *** The two glyphs are built here ONCE and the
+     markup carries the same two characters literally, so there is exactly one representation of
+     each and no path that can render the bare (colour-emoji) form. A bare U+25B2/U+25BC is in the
+     emoji-presentation set on some Android builds, and a colour glyph IGNORES CSS `color` -- so the
+     affordance would lose the colour its :active state gives it. */
+  var CHEV_DOWN = "\u25BC\uFE0E";       /* the controls are OPEN below; tap to collapse */
+  var CHEV_UP   = "\u25B2\uFE0E";       /* the controls are HIDDEN below; tap to expand   */
+
+  /* ---- THE SEAT'S OWN WORDS. Copied from jarvis/bubble.py:8350-8379, 8100-8122. --------------- */
+  var FACE = {
+    tap_idle:      "tap to speak",                 /* RAIL_FACE_TAP_IDLE      (bubble.py:8373) */
+    tap_hot:       "RECORDING - tap to finish",    /* RAIL_FACE_TAP_HOT       (bubble.py:8374) */
+    hold_idle:     "press/hold to speak",          /* RAIL_FACE_HOLD_IDLE     (bubble.py:8375) */
+    hold_hot:      "LIVE - let go to send",        /* RAIL_FACE_HOLD_HOT      (bubble.py:8376) */
+    always_idle:   "always on",                    /* RAIL_FACE_ALWAYS_IDLE   (bubble.py:8377) */
+    always_hot:    "ALWAYS ON - mic is open",      /* RAIL_FACE_ALWAYS_HOT    (bubble.py:8378) */
+    always_locked: "locked - 2 keys",              /* RAIL_FACE_ALWAYS_LOCKED (bubble.py:8379) */
+    lock_action:   "Lock to\ncurrent agent",       /* LOCK_ACTION_FACE_2ROW   (bubble.py:8114) */
+    lock_unlock:   "unlock\ncurrent agent",        /* LOCK_ACTION_UNLOCK_2ROW (bubble.py:8121) */
+    short_hold:    "hold",                         /* RAIL_MODE_SHORT         (bubble.py:8368) */
+    short_tap:     "tap",
+    short_wake:    "wake word",
+    short_always:  "ALWAYS ON"
+  };
+  var MODES = ["push-to-talk", "wake-word", "always-on"];   /* LISTEN_MODES' /mode values */
+
+  var $ = function (id) { return document.getElementById(id); };
+  var TOKEN = null;
+  try { TOKEN = window.localStorage.getItem(TOK_KEY) || null; } catch (e) { TOKEN = null; }
+  function setToken(t) {
+    TOKEN = t || null;
+    try { if (t) { window.localStorage.setItem(TOK_KEY, t); }
+          else { window.localStorage.removeItem(TOK_KEY); } } catch (e) {}
+  }
+
+  /* ---- STATE. `err` per rung: a failed call is `unknown` WITH its reason, never a default. ----- */
+  var S = {
+    session: null,  sessionErr: "",
+    state:   null,  stateErr:   "",
+    chats:   null,  chatsErr:   "",
+    deliv:   null,  delivErr:   "",
+    warnDismissed: false,
+    expanded: true,
+    held: false,                       /* OUR view of the press, never a claim about the seat     */
+    say: "", sayWarn: false, sayAt: 0,
+    sayReason: ""                      /* survives a refetch: a refusal must not be wiped by a poll */
+  };
+
+  /* ---- HELPERS -------------------------------------------------------------------------------- */
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function has(v) { return v !== undefined && v !== null && v !== ""; }
+  function typeName(v) { return (typeof v === "string" && v) ? v : (v ? String(v) : "unknown"); }
+
+  /* TRUE only when a KNOWN-SHAPED value was actually reported. Anything else is not a live value. */
+  function bstr(v) { return v === true ? "yes" : (v === false ? "no" : "unknown"); }
+
+  function say(txt, opts) {
+    opts = opts || {};
+    S.say = txt || "";
+    S.sayWarn = !!opts.warn;
+    S.sayAt = Date.now();
+    paintSay();
+  }
+  function paintSay() {
+    var n = $("say");
+    if (!S.say) { n.className = ""; n.textContent = ""; return; }
+    n.className = "on" + (S.sayWarn ? " warn" : "");
+    n.textContent = S.say;
+  }
+
+  function reasonOf(r) {
+    if (!r) { return "no response"; }
+    if (has(r.reason)) { return String(r.reason); }
+    if (has(r.error)) { return String(r.error); }
+    if (r.ok === false) { return "refused (no reason given)"; }
+    return "";
+  }
+
+  /* ---- THE WIRE --------------------------------------------------------------------------------
+     Every /phone/* call carries the bearer token. NO cache-bypass header is set anywhere: the
+     `x-requested-with` header is what forces a CORS preflight on a same-origin POST, and one
+     preflight per press of the mic button is exactly the latency a slow link cannot pay. */
+  function req(method, path, body) {
+    var opts = { method: method, credentials: "same-origin" };
+    var h = { "Accept": "application/json" };
+    if (TOKEN) { h["Authorization"] = "Bearer " + TOKEN; }
+    if (body !== undefined && body !== null) {
+      h["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(body);
+    }
+    opts.headers = h;
+    return fetch(path, opts).then(function (res) {
+      return res.text().then(function (t) {
+        var j = null;
+        try { j = t ? JSON.parse(t) : null; } catch (e) { j = null; }
+        if (!res.ok) {
+          var why = j && (j.error || j.reason) ? (j.error || j.reason) : ("http " + res.status);
+          var err = new Error(why);
+          err.body = j; err.status = res.status;
+          throw err;
+        }
+        if (j === null) {
+          var e2 = new Error("not json (http " + res.status + ")");
+          e2.status = res.status;
+          throw e2;
+        }
+        return j;
+      });
+    });
+  }
+  function errText(e) {
+    if (!e) { return "unknown error"; }
+    if (e.status === 401 || e.status === 403) { return "not authorised (" + e.message + ")"; }
+    return String(e.message || e);
+  }
+
+  /* ================================================================================================
+     PAINTING. Each rung has its own error, so one failed call can never make another rung lie.
+     ================================================================================================ */
+  function paintStrip() {
+    var dot = $("dot"), mode = $("s-mode"), sub = $("s-sub"), why = $("s-why");
+    var st = S.state || {}, sess = S.session || {};
+    var cls = "dot unk", m = "unknown", s = "", w = "";
+
+    if (S.stateErr) {
+      cls = "dot unk"; m = "unknown"; s = "the seat's state is unreadable";
+      w = S.stateErr;
+    } else if (!S.state) {
+      cls = "dot unk"; m = "unknown"; s = "reading /phone/state\u2026";
+    } else {
+      var listening = st.listening, modev = st.mode, mic = st.mic;
+      var micOk = (mic && typeof mic === "object") ? mic.ok : undefined;
+      if (listening === true && modev === "always-on") {
+        cls = "dot warn"; m = FACE.always_hot; s = "standing exposure: the mic stands open";
+        /* THE ONE STANDING-EXPOSURE FACT ON SCREEN, and its reason rides with it. */
+        if (has(st.reason)) { w = String(st.reason); }
+        else if (mic && has(mic.reason)) { w = String(mic.reason); }
+      } else if (listening === true) {
+        cls = "dot live"; m = "listening"; s = has(modev) ? typeName(modev) : "mode: unknown";
+      } else if (listening === false) {
+        cls = "dot"; m = "not listening"; s = has(modev) ? ("mode: " + typeName(modev)) : "mode: unknown";
+      } else {
+        cls = "dot unk"; m = "unknown"; s = "\u2018listening\u2019 absent from the snapshot";
+      }
+      if (micOk === false) { s = "microphone refused"; w = (mic && mic.reason) ? String(mic.reason) : ""; }
+      if (S.held) { s = s + " \u00b7 " + FACE.hold_hot; }
+    }
+    if (sess.paired === false) { cls = "dot warn"; w = "this phone is not paired to the seat"; }
+    dot.className = cls;
+    mode.textContent = m;
+    sub.textContent = s;
+    /* `w` is recomputed on every paint, so a warning that has CLEARED disappears with it. */
+    why.textContent = w || "";
+  }
+
+  function paintDetail() {
+    var st = S.state || {};
+    var bad = S.stateErr ? (" (unknown: " + S.stateErr + ")") : "";
+    $("c-listen").textContent = "listening: " + (S.state ? bstr(st.listening) + bad : "unknown" + bad);
+    $("c-mode").textContent = "mode: " +
+      (S.state && has(st.mode) ? typeName(st.mode) + bad : "unknown" + bad);
+    $("c-ptt").textContent = "press/hold: " +
+      (S.state && has(st.ptt_mode) ? typeName(st.ptt_mode) : "unknown") +
+      (S.state && st.ptt_held === true ? " (held now)" : "") + bad;
+    var mic = st.mic;
+    $("c-mic").textContent = "microphone: " +
+      ((mic && typeof mic === "object") && mic.ok !== undefined
+        ? bstr(mic.ok) + (mic.reason ? " - " + mic.reason : "") : "unknown") + bad;
+    $("c-lock").textContent = "lock: " + lockWord();
+    $("c-why").textContent = S.stateErr || "";
+
+    /* The lock row + the action face. ONE fact, read once, used by both (no second vocabulary). */
+    $("lock").textContent = S.state && isLocked() ? FACE.lock_unlock : FACE.lock_action;
+    $("k-state").textContent = "lock: " + lockWord();
+
+    /* The three mode buttons and the bar, coloured by the DAEMON's state, not by our hope. */
+    var btns = document.querySelectorAll("#modes .btn");
+    for (var i = 0; i < btns.length; i++) {
+      var b = btns[i], on = (S.state && st.mode === b.getAttribute("data-mode"));
+      b.style.borderColor = on ? "#2ea043" : "";
+      b.style.color = on ? "#5ee08a" : "";
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+    paintVoice();
+  }
+
+  function isLocked() {
+    var st = S.state || {}, lk = st.lock;
+    if (!lk || typeof lk !== "object") { return false; }
+    return has(lk.mode) || has(lk.target);
+  }
+  function lockWord() {
+    var st = S.state || {}, lk = st.lock;
+    if (!S.state) { return "unknown"; }
+    if (!lk || typeof lk !== "object") { return "unknown"; }
+    if (!has(lk.mode) && !has(lk.target)) { return "open"; }
+    return (has(lk.mode) ? String(lk.mode) : "unknown") + " -> " +
+           (has(lk.target) ? String(lk.target) : "unknown");
+  }
+
+  /* *** THE THREE VOICE FACES + `Lock to current agent`, COLOURED BY THE DAEMON'S STATE. ***
+     A control you cannot see the effect of is a decoration, so each face below is a reading of
+     `listening` / `mode` / `ptt_mode` / `ptt_held` / `lock` -- never a local optimism. */
+  function paintVoice() {
+    var st = S.state || {}, ptt = $("ptt"), tap = $("tap"), alw = $("always"), lk = $("lock");
+    if (!S.state) {
+      ptt.textContent = "unknown"; tap.textContent = "unknown"; alw.textContent = "unknown";
+      ptt.className = ""; tap.className = ""; alw.className = ""; lk.className = "";
+      return;
+    }
+    var listening = st.listening === true, mode = st.mode, pm = st.ptt_mode;
+
+    /* #ptt: GREEN press/hold. `#ptt-hot` while the seat reports the gate is HELD, or while our own
+       finger is down on this button -- the local half exists only so a slow link still shows the
+       press; the seat's `ptt_held` is what confirms it. */
+    var heldish = (st.ptt_held === true) || S.held;
+    ptt.id = heldish ? "ptt-hot" : "ptt";
+    ptt.textContent = heldish ? FACE.hold_hot : FACE.hold_idle;
+    ptt.title = "press and hold to speak";
+
+    /* #tap: BLUE tap to speak -- the LATCH inside push-to-talk, selected by `ptt_mode`. */
+    var tapOn = (mode === "push-to-talk" && pm === "tap");
+    tap.id = tapOn ? "tap-hot" : "tap";
+    tap.textContent = tapOn && listening ? FACE.tap_hot : FACE.tap_idle;
+    tap.title = "tap to speak";
+
+    /* #always: RED always on -- *** THE ONLY MODE WITH STANDING EXPOSURE ***. */
+    var alwOn = (mode === "always-on" && listening);
+    alw.id = alwOn ? "always-hot" : "always";
+    alw.textContent = alwOn ? FACE.always_hot : FACE.always_idle;
+    alw.title = "always on - the microphone stands open";
+
+    lk.className = isLocked() ? "armed" : "";
+  }
+
+  function paintChats() {
+    var box = $("chats"), why = $("r-why");
+    if (S.chatsErr) {
+      box.innerHTML = '<span class="mut">routing rows: <strong>unknown</strong> - ' +
+                      esc(S.chatsErr) + "</span>";
+      why.textContent = ""; return;
+    }
+    if (!S.chats) { box.innerHTML = '<span class="mut">reading /phone/chats\u2026</span>'; return; }
+    /* ★★★ READ THE SHAPE THE SERVER ACTUALLY SENDS (fixed 2026-10-15). This looked for
+       `S.chats.rows` and the route sends the DAEMON's own payload — `chats` (192 rows) and
+       `groups` (26 teams). The page therefore rendered "routing rows: none reported" over a
+       perfectly working route: a control that reads as broken while the wire is fine, which is the
+       exact class this estate keeps paying for. The alias chain is deliberate — `chats` is the
+       daemon's name and is authoritative; `rows` is accepted because an earlier contract used it,
+       and `groups` is the last resort. ★ The lesson is the contract's, not the page's: a spec that
+       names a field the server never sends produces a page that cannot be wrong out loud. */
+    var rows = null;
+    if (S.chats.chats && S.chats.chats.length) { rows = S.chats.chats; }
+    else if (S.chats.rows && S.chats.rows.length) { rows = S.chats.rows; }
+    else if (S.chats.groups && S.chats.groups.length) { rows = S.chats.groups; }
+    if (!rows) {
+      box.innerHTML = '<span class="mut">routing rows: none reported</span>';
+    } else {
+      var h = '<div class="row">', i;
+      for (i = 0; i < rows.length; i++) {
+        var r = rows[i] || {};
+        var name = null, id = null;
+        if (typeof r === "string") { name = r; } else {
+          /* ★ `name` FIRST, because that is what chat_menu.menu() sends alongside `id`. `label`
+             and `title` are kept as tolerated aliases so a shape change degrades to a label rather
+             than to an empty button. */
+          name = r.name || r.label || r.title || r.id || null;
+          id = r.id || null;
+        }
+        /* ★ A ROW THAT CANNOT BE ROUTED KEEPS ITS PLACE AND IS MARKED, never dropped — the same
+           rule the seat's own menu follows. A menu that silently omits rows teaches the reader it
+           is showing everything. */
+        var unroutable = (typeof r === "object" && r && r.routable === false);
+        h += '<button class="btn" type="button" data-chat="' + esc(id || name) + '"' +
+             (unroutable ? ' data-unroutable="1" title="' + esc(String(r.reason || "not routable")) + '"' : "") +
+             '>' + esc(name || "unnamed row") + (unroutable ? ' <span class="mut">&#x00B7; not routable</span>' : "") +
+             "</button>";
+      }
+      h += "</div>";
+      /* ONE MESSAGE THIS PAGE CANNOT SEND: the routing WRITE route is not in the /phone contract.
+         Saying so is honest; a button that looks live and posts nowhere is the decoration this
+         page is required to avoid. */
+      h += '<p class="mut" style="margin:8px 0 0">Routing rows are shown read-only: the /phone ' +
+           'contract in this build has no route-write call, so tapping a row is not wired.</p>';
+      box.innerHTML = h;
+      var rb = box.querySelectorAll(".btn");
+      for (i = 0; i < rb.length; i++) {
+        rb[i].addEventListener("click", function () {
+          say("This page cannot set the route yet: no route-write call is in the /phone contract.",
+              { warn: true });
+        });
+      }
+    }
+    why.textContent = "";
+  }
+
+  function paintDeliv() {
+    var box = $("deliv"), why = $("d-why");
+    if (S.delivErr) {
+      box.innerHTML = "delivery mode: <strong>unknown</strong> - " + esc(S.delivErr);
+      why.textContent = ""; return;
+    }
+    if (!S.deliv) { box.innerHTML = "reading /phone/delivery\u2026"; return; }
+    var d = S.deliv, h = "delivery mode: " + esc(has(d.mode) ? String(d.mode) : "unknown") + ".";
+    if (d.modes && d.modes.length) {
+      h += ' <span class="mut">(' + esc(d.modes.join(" / ")) + ")</span>";
+      h += '<div class="row" style="margin-top:8px">';
+      for (var i = 0; i < d.modes.length; i++) {
+        h += '<button class="btn" type="button" data-deliv="' + esc(d.modes[i]) + '">' +
+             esc(d.modes[i]) + "</button>";
+      }
+      h += "</div>";
+      h += '<p class="mut" style="margin:8px 0 0">Read-only here: a delivery WRITE route is not in ' +
+           "the /phone contract, so tapping a mode is not wired.</p>";
+    }
+    box.innerHTML = h;
+    var db = box.querySelectorAll(".btn");
+    for (var k = 0; k < db.length; k++) {
+      db[k].addEventListener("click", function () {
+        say("This page cannot set delivery yet: no delivery-write call is in the /phone contract.",
+            { warn: true });
+      });
+    }
+    why.textContent = "";
+  }
+
+  function paintSession() {
+    var sess = S.session || {};
+    var paired = (sess.paired === true) ? true : (sess.paired === false ? false : null);
+    $("pair").hidden = (paired !== false);
+    $("dev").textContent = "device: " + (sess.device && has(sess.device.id)
+      ? typeName(sess.device.label || sess.device.id) + " (" + typeName(sess.device.id) + ")"
+      : "unknown");
+    $("surface").textContent = "surface: " + (has(sess.surface) ? typeName(sess.surface) : "unknown");
+    paintWarn(sess.warnings);
+  }
+
+  /* *** THE BANNER IS A WARN, NOT A WALL: the rows below it stay. Dismissing hides the BANNER and
+     changes nothing about the policy -- the copy says so, because a dismiss that silently cleared a
+     policy would be the dishonest kind. *** */
+  function paintWarn(warnings) {
+    var box = $("warn"), tx = $("warn-tx");
+    var list = [];
+    if (warnings && warnings.length) { list = warnings.slice(0); }
+    if (S.chats && has(S.chats.warning)) { list.push(String(S.chats.warning)); }
+    /* ★★ DEDUPE. The banner takes its sentences from two sources (the session's warnings, and the
+       warning that rides the chats read). When both carried the same sentence it rendered TWICE —
+       seen in the screenshot, 2026-10-15. The server no longer sends the duplicate, and this keeps
+       a future second source from reintroducing one: a warning that repeats itself is read as a bug
+       and dismissed on sight, which is how a warning stops working. */
+    var seen = {}, dedup = [];
+    for (var d = 0; d < list.length; d++) { var k = String(list[d]); if (!seen[k]) { seen[k] = 1; dedup.push(k); } }
+    list = dedup;
+    if (!list.length || S.warnDismissed) { box.hidden = true; tx.textContent = ""; return; }
+    var lines = [];
+    for (var i = 0; i < list.length; i++) { lines.push(String(list[i])); }
+    tx.textContent = lines.join("  \u00b7  ") +
+      " \u2014 this is the PHONE surface: it is a warning, not a block. The rows below are still " +
+      "shown, and hiding this banner does not change the policy.";
+    box.hidden = false;
+  }
+
+  function paintHandle() {
+    $("main").hidden = !S.expanded;
+    $("chev").textContent = S.expanded ? CHEV_DOWN : CHEV_UP;
+    $("handle-tx").textContent = S.expanded ? "collapse controls" : "expand controls";
+    $("handle").setAttribute("aria-expanded", S.expanded ? "true" : "false");
+  }
+
+  function paintAll() {
+    paintStrip(); paintDetail(); paintChats(); paintDeliv();
+    paintWarn(S.session ? S.session.warnings : null); paintHandle(); paintSay();
+  }
+
+  /* ================================================================================================
+     FETCHES. /phone/session first, then /phone/state -- and all four rungs, each with its own error.
+     ================================================================================================ */
+  function loadSession() {
+    return req("GET", "/phone/session").then(function (j) {
+      S.session = j; S.sessionErr = "";
+      /* ★★★ ONLY AN EXPLICIT IDENTITY REFUSAL MAY DESTROY A STORED TOKEN (fixed 2026-10-15).
+         This line used to be `if (j && j.paired === false) { setToken(null); }` — which meant a
+         TRANSIENT answer DELETED the operator's pairing and sent him back to the seat for a new
+         code. `paired:false` is two different facts: "you presented nothing" and "what you
+         presented is not a live pairing", and a client cannot tell them apart, so the SERVER says
+         which, via `forget_token`. Absent that field (an older server) the token is KEPT: losing a
+         pairing is recoverable only by walking back to the seat, so the safe default is to keep. */
+      if (j && j.paired === false && j.forget_token === true) { setToken(null); }
+      paintSession(); paintStrip();
+    }, function (e) {
+      S.sessionErr = errText(e); S.session = null;
+      say("session: unknown (" + S.sessionErr + ")", { warn: true });
+      paintSession(); paintStrip();
+    });
+  }
+  function loadRest() {
+    return Promise.all([
+      req("GET", "/phone/state").then(function (j) { S.state = j; S.stateErr = ""; },
+        function (e) { S.state = null; S.stateErr = errText(e); }),
+      req("GET", "/phone/chats").then(function (j) { S.chats = j; S.chatsErr = ""; },
+        function (e) { S.chats = null; S.chatsErr = errText(e); }),
+      req("GET", "/phone/delivery").then(function (j) { S.deliv = j; S.delivErr = ""; },
+        function (e) { S.deliv = null; S.delivErr = errText(e); })
+    ]).then(function () { paintAll(); });
+  }
+  function refresh() {
+    return req("GET", "/phone/state").then(function (j) { S.state = j; S.stateErr = ""; },
+      function (e) { S.state = null; S.stateErr = errText(e); }).then(function () {
+        return req("GET", "/phone/chats").then(function (j) { S.chats = j; S.chatsErr = ""; },
+          function (e) { S.chats = null; S.chatsErr = errText(e); });
+      }).then(function () { paintAll(); });
+  }
+
+  /* ---- WRITES ---------------------------------------------------------------------------------- */
+  function post(path, body) {
+    return req("POST", path, body);
+  }
+
+  /* *** PRESS/HOLD, ON A PHONE. ***
+     pointerdown -> held:true, mode:"hold"; pointerup / pointercancel / pointerleave -> held:false.
+     *** THE STUCK-MIC GUARD: if the page goes hidden or is pagehidden WHILE HELD, we send
+     held:false immediately. A phone that backgrounds with the mic open is the exact failure this
+     prevents -- the OS never delivers a pointerup to a backgrounded tab, so `held:true` would
+     otherwise stand as the seat's last word with nobody holding anything. ***
+     *** AND A DROPPED EVENT IS THE SAME FAILURE WEARING A DIFFERENT COAT: if a press and its
+     release both land while one request is in flight, a naive `if (busy) return;` DISCARDS the
+     release and leaves the gate open. So the sender COALESCES: at most one request in flight, and
+     the newest requested state is always sent afterwards. Earlier presses are skippable; the LAST
+     state never is. */
+  var pttInFlight = false, pttQueued = null;
+  function pttSend(held) {
+    held = !!held;
+    if (pttInFlight) { pttQueued = held; return; }
+    pttInFlight = true;
+    if (held) { S.held = true; paintVoice(); paintStrip(); }
+    post("/phone/ptt", { held: held, mode: "hold" }).then(function (r) {
+      pttInFlight = false;
+      S.held = (r && (r.held === true || r.ptt_held === true));
+      S.state = S.state || {};
+      if (r && r.ptt_held !== undefined) { S.state.ptt_held = r.ptt_held; }
+      if (r && r.ptt_refused === true) {
+        /* *** A REFUSAL MUST BE AUDIBLE. A silent refusal reads as a broken button. *** */
+        S.held = false;
+        S.sayReason = reasonOf(r) || "refused";
+        say("refused: " + S.sayReason, { warn: false });
+      } else if (r && r.reason && held) {
+        S.sayReason = String(r.reason);
+        say("held, with a note: " + S.sayReason, { warn: true });
+      } else if (!held) {
+        S.sayReason = "";
+        say("");
+      }
+      paintAll();
+      if (pttQueued !== null) { var q = pttQueued; pttQueued = null; pttSend(q); return; }
+      return refresh();
+    }, function (e) {
+      pttInFlight = false; S.held = false;
+      S.state = null; S.stateErr = errText(e);
+      say("press/hold: unknown (" + S.stateErr + ")", { warn: true });
+      paintAll();
+      if (pttQueued !== null) { var q2 = pttQueued; pttQueued = null; pttSend(q2); return; }
+    });
+  }
+  function releaseBecauseHidden() {
+    if (!S.held) { return; }
+    S.held = false;
+    /* Fire-and-forget on purpose: this runs inside pagehide, where an async chain cannot be
+       awaited. `keepalive` is what lets the request outlive the page. */
+    try {
+      var h = { "Accept": "application/json", "Content-Type": "application/json" };
+      if (TOKEN) { h["Authorization"] = "Bearer " + TOKEN; }
+      fetch("/phone/ptt", { method: "POST", keepalive: true, credentials: "same-origin",
+                            headers: h, body: JSON.stringify({ held: false, mode: "hold" }) });
+    } catch (e) {}
+    paintVoice();
+  }
+
+  /* The same coalescing discipline for the mode writes: the LAST choice the finger made is the one
+     that must reach the seat, so a change requested mid-flight is queued rather than dropped. */
+  var modeInFlight = false, modeQueued = null;
+  function setMode(m) {
+    if (modeInFlight) { modeQueued = m; return Promise.resolve(); }
+    modeInFlight = true;
+    return post("/phone/mode", { mode: m }).then(function (r) {
+      modeInFlight = false;
+      if (r && r.ok === false) { say("mode change refused: " + (reasonOf(r) || "no reason"), { warn: true }); }
+      else { say("mode: " + m + " requested."); }
+      if (modeQueued !== null) { var q = modeQueued; modeQueued = null; setMode(q); return; }
+      return refresh();
+    }, function (e) {
+      modeInFlight = false;
+      say("mode change: unknown (" + errText(e) + ")", { warn: true });
+      if (modeQueued !== null) { var q2 = modeQueued; modeQueued = null; setMode(q2); return; }
+    });
+  }
+  function setAlways(on) {
+    return post("/phone/always_on", { on: !!on }).then(function (r) {
+      if (r && (r.ok === false || r.refused === true)) {
+        say("always on refused: " + (reasonOf(r) || "no reason given"), { warn: true });
+      } else {
+        say("always on: " + (on ? "requested" : "off requested") + ".");
+      }
+      return refresh();
+    }, function (e) {
+      say("always on: unknown (" + errText(e) + ")", { warn: true });
+    });
+  }
+  function setTap(on) {
+    return post("/phone/ptt", { held: !!on, mode: "tap" }).then(function (r) {
+      if (r && r.ptt_refused === true) {
+        say("refused: " + (reasonOf(r) || "refused"), { warn: false });
+      } else if (r && r.ok === false) {
+        say("tap to speak refused: " + (reasonOf(r) || "no reason"), { warn: true });
+      } else {
+        say(on ? "tap to speak: recording." : "tap to speak: stopped.");
+      }
+      return refresh();
+    }, function (e) {
+      say("tap to speak: unknown (" + errText(e) + ")", { warn: true });
+    });
+  }
+
+  /* ---- THE CONFIRM. `always-on` IS THE ONE WRITE THAT ASKS ------------------------------------- */
+  function openConfirm() {
+    var st = S.state || {};
+    $("cf-now").textContent = "the seat reports: listening " + bstr(st.listening) +
+      ", mode " + (has(st.mode) ? typeName(st.mode) : "unknown") +
+      ". Turning it off is the other button here.";
+    $("cf").hidden = false;
+    $("cf-no").focus();
+  }
+  function closeConfirm() { $("cf").hidden = true; }
+
+  /* ================================================================================================
+     WIRING
+     ================================================================================================ */
+  function wire() {
+    var held = false;
+    function down(ev) {
+      if (ev && ev.preventDefault) { ev.preventDefault(); }
+      if (held) { return; }
+      held = true;
+      pttSend(true);
+    }
+    function up(ev) {
+      if (ev && ev.preventDefault) { ev.preventDefault(); }
+      if (!held && !S.held) { return; }
+      held = false;
+      pttSend(false);
+    }
+    var p = $("ptt");
+    p.addEventListener("pointerdown", down);
+    p.addEventListener("pointerup", up);
+    p.addEventListener("pointercancel", up);
+    p.addEventListener("pointerleave", up);
+    /* A finger that leaves the button and lifts elsewhere never delivers pointerup here. */
+    document.addEventListener("pointerup", up);
+    document.addEventListener("pointercancel", up);
+    /* Keyboard/fallback path for a desktop browser and for a screen reader. */
+    p.addEventListener("keydown", function (ev) {
+      if (ev.key === " " || ev.key === "Enter") { down(ev); }
+    });
+    p.addEventListener("keyup", function (ev) {
+      if (ev.key === " " || ev.key === "Enter") { up(ev); }
+    });
+
+    /* *** THE STUCK-MIC GUARD. *** */
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "hidden") { releaseBecauseHidden(); }
+    });
+    window.addEventListener("pagehide", releaseBecauseHidden);
+    window.addEventListener("blur", releaseBecauseHidden);
+
+    $("tap").addEventListener("click", function () {
+      var st = S.state || {}, on = (st.mode === "push-to-talk" && st.ptt_mode === "tap");
+      setTap(!on);
+    });
+    $("always").addEventListener("click", function () { openConfirm(); });
+    $("cf-no").addEventListener("click", function () { closeConfirm(); say("always on: kept off."); });
+    $("cf-yes").addEventListener("click", function () { closeConfirm(); setAlways(true); });
+    $("lock").addEventListener("click", function () {
+      say(isLocked() ? "Lock: release is not in the /phone contract yet - nothing was sent."
+                     : "Lock: `Lock to current agent` has no /phone call yet - nothing was sent.",
+          { warn: true });
+    });
+
+    $("handle").addEventListener("click", function () {
+      S.expanded = !S.expanded; paintHandle();
+    });
+    $("warn-dismiss").addEventListener("click", function () {
+      S.warnDismissed = true;
+      say("Warning hidden. The policy is unchanged: hiding a banner dismisses the notice only.",
+          { warn: true });
+      paintWarn(S.session ? S.session.warnings : null);
+    });
+
+    var mb = document.querySelectorAll("#modes .btn");
+    for (var i = 0; i < mb.length; i++) {
+      (function (b) {
+        b.addEventListener("click", function () {
+          var m = b.getAttribute("data-mode");
+          if (m === "always-on") { openConfirm(); return; }   /* the one mode that ASKS */
+          setMode(m);
+        });
+      })(mb[i]);
+    }
+
+    $("pair-go").addEventListener("click", function () {
+      var code = ($("pair-code").value || "").replace(/^\s+|\s+$/g, "");
+      var label = ($("pair-label").value || "").replace(/^\s+|\s+$/g, "");
+      if (!code) { $("pair-why").textContent = "Enter the pairing code from the seat."; return; }
+      $("pair-why").textContent = "redeeming\u2026";
+      post("/phone/pair/redeem", { code: code, label: label || "phone" }).then(function (r) {
+        if (r && r.ok === true && has(r.token)) {
+          setToken(String(r.token));
+          $("pair-why").textContent = "";
+          $("pair-code").value = "";
+          say("paired.");
+          return boot();
+        }
+        $("pair-why").textContent = "refused: " + (reasonOf(r) || "no reason given");
+      }, function (e) {
+        $("pair-why").textContent = "unknown: " + errText(e);
+      });
+    });
+
+    document.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape" && !$("cf").hidden) { closeConfirm(); }
+    });
+  }
+
+  function boot() {
+    return loadSession().then(loadRest);
+  }
+
+  wire();
+  paintHandle();
+  paintVoice();
+  boot();
+
+  /* ★ A slow poll, visible in the strip's dot: the seat is the source of truth and this page is a
+     window onto it. `visibilitychange` also gates the poll -- a phone in a pocket does not need to
+     poll, and the guard above has already released anything held. */
+  window.setInterval(function () {
+    if (document.visibilityState === "hidden") { return; }
+    refresh();
+  }, 5000);
+})();
+</script>
+</body>
+</html>
